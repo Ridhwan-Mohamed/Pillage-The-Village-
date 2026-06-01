@@ -19,7 +19,7 @@ import { playBuildingCollapseSmoke } from "../FX/SmokeClearing";
 export class ClayOven {
 
     static scene;
-    static cookDuration = 675;
+    static cookDuration = 575;
     static slotCount = 1;
     static itemCapacityPerSlot = 1;
 
@@ -498,21 +498,23 @@ export class ClayOven {
             const gridX = Math.floor(x / SQUARESIZE) - Math.floor(lenX / 2);
             const gridY = Math.floor(y / SQUARESIZE) - Math.floor(lenY / 2);
 
-            const isBlocked = Map.checkBlockPositionGen(
+            const tintColor = Map.checkBlockPosition(
                 gridX,
                 gridY,
                 lenX,
                 lenY,
+                ghost,
                 {
                     padding: 1,
                     protectFarmSpots: true,
                     paddingAllowWalls: true,
                     paddingProtectFarmSpots: false,
-                    enforceMainIslandInterior: true,
+                    allowAutoClearSite: true,
                 }
             );
+            const isBlocked = !!ghost.blocked;
 
-            ghost.setTint(isBlocked ? 0xff4444 : 0x44ff44);
+            ghost.setTint(tintColor);
             ghost.setPosition(
                 x + (lenX % 2 ? SQUARESIZE / 2 : 0),
                 y + (lenY % 2 ? SQUARESIZE / 2 : 0)

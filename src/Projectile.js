@@ -381,15 +381,43 @@ export class Projectile {
         return this.isIgnoredStructureHit(hit, this.getStructureIdentitySet(source));
     }
 
+    static isWallStructureHit(hit) {
+        return !!(hit?.wallRef || hit?.isWall);
+    }
+
+    static isExplicitWallDestroyTarget(source, hit) {
+        const wall = hit?.wallRef;
+        const shooter = source?.player || source;
+        const task = shooter?.task;
+        if (!wall || !task) return false;
+        if (shooter?.state !== CONTROL_STATES.DESTROY_MODE_T) return false;
+
+        const targetX = Number(task.tx ?? task.x);
+        const targetY = Number(task.ty ?? task.y);
+        return Number(wall.x) === targetX && Number(wall.y) === targetY;
+    }
+
+    static canShootThroughFriendlyWall(source, hit) {
+        const shooter = source?.player || source;
+        if (!shooter?.isGunslinger || !this.isWallStructureHit(hit)) return false;
+        if (this.isExplicitWallDestroyTarget(source, hit)) return false;
+
+        const shotTeam = Number(this.getShotTeam(source));
+        const wallTeam = Number(this.getStructureTeam(hit));
+        return Number.isFinite(shotTeam) && Number.isFinite(wallTeam) && shotTeam === wallTeam;
+    }
+
     static shouldCollideWithStructure(source, hit) {
         if (!hit?.active) return false;
         if (hit.blocksProjectiles === false) return false;
+        if (this.canShootThroughFriendlyWall(source, hit)) return false;
         return !this.shouldIgnoreStructureForShot(source, hit);
     }
 
     static shouldBlockLineOfSight(source, hit) {
         if (!hit?.active) return false;
         if (hit.blocksLineOfFire === false) return false;
+        if (this.canShootThroughFriendlyWall(source, hit)) return false;
         return !this.shouldIgnoreStructureForShot(source, hit);
     }
 
@@ -442,7 +470,8 @@ export class Projectile {
         const bottom = Number.isFinite(hit.body?.bottom) ? hit.body.bottom : (hit.y + (hit.displayHeight ?? 0) / 2);
         const width = Math.max(1, right - left);
         const height = Math.max(1, bottom - top);
-        return new Phaser.Geom.Rectangle(left, top, width, height);
+        const pad = 1;
+        return new Phaser.Geom.Rectangle(left - pad, top - pad, width + pad * 2, height + pad * 2);
     }
 
     static leadAndAngle(attacker, target, projectileSpeed) {
@@ -501,9 +530,15 @@ export class Projectile {
                 Player._cleanupCombatTicketForTarget?.(projectile.team, target);
                 Player.destroyPlayer(target);
 
-                if (projectile.player?.active && projectile.player?.body) {
+                const shooterStillTrackingTarget =
+                    projectile.player?.track?.[0]?.gameObject === target ||
+                    projectile.player?.forcedTarget === target;
+
+                if (shooterStillTrackingTarget && projectile.player?.active && projectile.player?.body) {
                     CombatSpacingCoordinator.clearTroopFocus(projectile.player);
                     Player.resetRoamState?.(projectile.player);
+                    Player.clearRecentCombatAttacker?.(projectile.player);
+                    Player.clearGunslingerKiteState?.(projectile.player);
                     Teams.movePlayerState(projectile.player, CONTROL_STATES.TRACK_MODE);
                     projectile.player.track = null;
                     projectile.player.forcedTarget = null;

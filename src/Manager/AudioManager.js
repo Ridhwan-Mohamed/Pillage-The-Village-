@@ -73,6 +73,49 @@ export class AudioManager {
   static ambience = new Map(); // key -> Phaser.Sound.BaseSound|null
   static loops = new Map();    // misc loops (oven)
   static lastMix = null;
+  // Weather/menu ambience also live in loops; only work/action loops pause with simulation.
+  static PAUSABLE_WORLD_LOOP_KEYS = new Set([
+    "loop_oven_cook",
+    "sfx_construction",
+    "sfx_axe_chop",
+    "sfx_rock_hit",
+  ]);
+  static WORLD_SFX_KEYS = new Set([
+    "sfx_step",
+    "sfx_swim",
+    "sfx_swim_move_1",
+    "sfx_swim_move_2",
+    "sfx_swim_move_3",
+    "sfx_pickup",
+    "sfx_gun_shot",
+    "sfx_sword_hit",
+    "sfx_hand_punch",
+    "sfx_boxing_punch",
+    "sfx_plant_audio",
+    "sfx_plant_harvest",
+    "sfx_water_pickup",
+    "sfx_watering_plant",
+    "sfx_tree_break",
+    "sfx_rock_break",
+    "sfx_building_complete",
+    "sfx_building_damage",
+    "sfx_building_collapse",
+    "sfx_door_open",
+    "sfx_door_close",
+    "sfx_end_stage_explosions",
+    "sfx_flee_scream_1",
+    "sfx_flee_scream_2",
+    "sfx_flee_scream_3",
+    "sfx_flee_scream_4",
+    "sfx_flee_scream_5",
+    "sfx_flee_scream_6",
+    "sfx_shocker_zap_1",
+    "sfx_shocker_zap_2",
+    "sfx_shocker_zap_3",
+    "sfx_boss_thunder",
+  ]);
+  static _worldAudioPaused = false;
+  static _pausableWorldLoopVolumes = new Map();
 
   static isNight = false;
 
@@ -233,6 +276,18 @@ export class AudioManager {
     return this._muted;
   }
 
+  static setWorldAudioPaused(paused = false) {
+    const next = !!paused;
+    if (this._worldAudioPaused === next) return;
+    this._worldAudioPaused = next;
+    if (next) this._stopActiveWorldSfx();
+    this._syncPausableWorldLoops();
+  }
+
+  static isWorldAudioPaused() {
+    return !!this._worldAudioPaused;
+  }
+
   // Call once per redraw
   static updateFromRedraw({
     topLeftX, topLeftY, bottomRightX, bottomRightY,
@@ -281,6 +336,7 @@ export class AudioManager {
   // Throttled step SFX helper (safe to call every frame)
   static tryPlayStep(sprite) {
     if (!this.scene) return;
+    if (this._worldAudioPaused) return;
     const isSwimming = this._isSpriteSwimming(sprite);
     const soundKey = isSwimming ? this._pickSwimMoveSoundKey() : "sfx_step";
     if (!soundKey || !this.scene.cache.audio.exists(soundKey)) return;
@@ -306,6 +362,7 @@ export class AudioManager {
 
     static playPickup(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_pickup")) return;
 
         this.scene.sound.play("sfx_pickup", {
@@ -317,6 +374,7 @@ export class AudioManager {
     // AudioManager.js
     static playPlant(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_plant_audio")) return;
 
         this.scene.sound.play("sfx_plant_audio", {
@@ -327,6 +385,7 @@ export class AudioManager {
 
     static playCropHarvest(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_plant_harvest")) return;
 
         this.scene.sound.play("sfx_plant_harvest", {
@@ -337,6 +396,7 @@ export class AudioManager {
 
     static playWateringStart(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_watering_plant")) return;
 
         this.scene.sound.play("sfx_watering_plant", {
@@ -347,6 +407,7 @@ export class AudioManager {
 
     static playWaterPickup(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_water_pickup")) return;
 
         this.scene.sound.play("sfx_water_pickup", {
@@ -357,6 +418,7 @@ export class AudioManager {
 
     static playFleeScream(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
 
         const keys = [
             "sfx_flee_scream_1",
@@ -391,6 +453,7 @@ export class AudioManager {
 
     static playShockerZap(_index = null, opts = {}) {
         if (!this.scene) return false;
+        if (this._worldAudioPaused) return false;
 
         const keys = this.SHOCKER_ZAP_KEYS.filter((key) => this.scene.cache.audio.exists(key));
         if (!keys.length) return false;
@@ -420,6 +483,7 @@ export class AudioManager {
 
     static playBossThunder(opts = {}) {
         if (!this.scene) return false;
+        if (this._worldAudioPaused) return false;
         if (!this.scene.cache.audio.exists("sfx_boss_thunder")) return false;
 
         const now = this.scene.time?.now ?? Date.now();
@@ -466,6 +530,7 @@ export class AudioManager {
 
     static playSound(soundKey, opts = {}) {
         if (!this.scene) return;
+        if (opts.world && this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists(soundKey)) return;
 
         this.scene.sound.play(soundKey, {
@@ -474,8 +539,13 @@ export class AudioManager {
         });
     }
 
+    static playWorldSound(soundKey, opts = {}) {
+        this.playSound(soundKey, { ...opts, world: true });
+    }
+
     static playOptionalSound(soundKey, fallbackKey = null, opts = {}) {
         if (!this.scene) return;
+        if (opts.world && this._worldAudioPaused) return;
         const key = this.scene.cache.audio.exists(soundKey)
             ? soundKey
             : (fallbackKey && this.scene.cache.audio.exists(fallbackKey) ? fallbackKey : null);
@@ -589,6 +659,7 @@ export class AudioManager {
         this.playSound("sfx_building_complete", {
             volume: opts.volume ?? 0.24,
             rate: opts.rate ?? (0.98 + Math.random() * 0.04),
+            world: !!opts.world,
         });
     }
 
@@ -641,6 +712,7 @@ export class AudioManager {
 
     static playTreeBreak(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_tree_break")) return;
 
         this.scene.sound.play("sfx_tree_break", {
@@ -651,6 +723,7 @@ export class AudioManager {
 
     static playRockBreak(opts = {}) {
         if (!this.scene) return;
+        if (this._worldAudioPaused) return;
         if (!this.scene.cache.audio.exists("sfx_rock_break")) return;
 
         this.scene.sound.play("sfx_rock_break", {
@@ -811,7 +884,7 @@ export class AudioManager {
     // Option B: gentle ramp with # builders (uncomment if you prefer)
     // const target = (n > 0) ? this._clamp(0.18 + 0.06 * (n - 1), 0, 0.45) : 0;
 
-    this._fadeTo(s, target);
+    this._setPausableWorldLoopVolume("sfx_construction", target);
   }
 
   static _applyAmbientMix(tileMix) {
@@ -844,7 +917,7 @@ export class AudioManager {
     const v = this._clamp(0.10 + cookingOvenCount * 0.07, 0, 0.65) * this.OVEN_MASTER;
 
     this._ensureLoop(this.loops, "loop_oven_cook");
-    this._fadeTo(this.loops.get("loop_oven_cook"), v);
+    this._setPausableWorldLoopVolume("loop_oven_cook", v);
   }
 
     static setHarvestActive(sprite, material /* "wood" | "rock" */, isActive) {
@@ -896,12 +969,13 @@ export class AudioManager {
         // or a gentle ramp if you want:
         // const target = (n > 0) ? this._clamp(0.18 + 0.05 * (n - 1), 0, 0.45) : 0;
 
-        this._fadeTo(s, target);
+        this._setPausableWorldLoopVolume(loopKey, target);
     }
 
     // AudioManager.js
     static playWeaponAttack(attackerSprite, weapon, opts = {}) {
         if (!this.scene || !weapon) return;
+        if (this._worldAudioPaused) return;
 
         const key = weapon.attackSfxKey;
         if (!key) return;
@@ -934,15 +1008,15 @@ export class AudioManager {
     const s = this.scene.sound.add(key, { loop: true, volume: 0 });
     s.play();
     map.set(key, s);
+    if (map === this.loops && this.PAUSABLE_WORLD_LOOP_KEYS.has(key)) {
+      this._syncPausableWorldLoop(key, s);
+    }
   }
 
   static _fadeTo(sound, targetVol) {
     if (!sound) return;
 
-    if (sound._phxFadeTween) {
-      sound._phxFadeTween.stop();
-      sound._phxFadeTween = null;
-    }
+    this._stopFade(sound);
 
     const cur = sound.volume ?? 0;
     if (Math.abs(cur - targetVol) < 0.01) {
@@ -956,6 +1030,49 @@ export class AudioManager {
       duration: this.FADE_MS,
       onComplete: () => { sound._phxFadeTween = null; }
     });
+  }
+
+  static _setPausableWorldLoopVolume(key, targetVol) {
+    const target = this._clamp(Number(targetVol) || 0, 0, 1);
+    this._pausableWorldLoopVolumes.set(key, target);
+    this._syncPausableWorldLoop(key, this.loops.get(key));
+  }
+
+  static _syncPausableWorldLoops() {
+    for (const key of this.PAUSABLE_WORLD_LOOP_KEYS) {
+      this._syncPausableWorldLoop(key, this.loops.get(key));
+    }
+  }
+
+  static _syncPausableWorldLoop(key, sound) {
+    if (!sound) return;
+    const target = this._pausableWorldLoopVolumes.get(key) ?? 0;
+    if (this._worldAudioPaused) {
+      this._stopFade(sound);
+      try { sound.setVolume(0); } catch {}
+      try { sound.pause?.(); } catch {}
+      return;
+    }
+
+    try {
+      if (sound.isPaused) sound.resume?.();
+      else if (sound.isPlaying === false) sound.play?.();
+    } catch {}
+    this._fadeTo(sound, target);
+  }
+
+  static _stopFade(sound) {
+    if (!sound?._phxFadeTween) return;
+    try { sound._phxFadeTween.stop(); } catch {}
+    sound._phxFadeTween = null;
+  }
+
+  static _stopActiveWorldSfx() {
+    const soundManager = this.scene?.sound;
+    if (!soundManager?.stopByKey) return;
+    for (const key of this.WORLD_SFX_KEYS) {
+      try { soundManager.stopByKey(key); } catch {}
+    }
   }
 
   static _clamp(v, lo, hi) {
@@ -1088,6 +1205,8 @@ export class AudioManager {
     stopMap(this.loops);
 
     this.lastMix = null;
+    this._worldAudioPaused = false;
+    this._pausableWorldLoopVolumes.clear();
     this.constructionWorkers.clear();
     this.woodCutters.clear();
     this.rockCutters.clear();

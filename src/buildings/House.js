@@ -18,13 +18,18 @@ import {
     layoutStructuralHealthBar,
 } from "../UI/BuildingTheme";
 import { playBuildingCollapseSmoke } from "../FX/SmokeClearing";
+import { animateOverlayPop, isOverviewMode } from "../UI/OverlayPopAnimator";
 
 export class House {
 
     static scene;
+    static _overviewMode = false;
+    static _zoomModeScene = null;
+    static _onZoomModeChanged = null;
 
     constructor(x, y, houseType, team) {
         this.scene = House.scene;
+        House._ensureZoomModeListener(this.scene);
         this.x = x;
         this.y = y;
         this.team = team;
@@ -118,6 +123,36 @@ export class House {
         return Teams.canRecruitPlayer?.(team) ?? false;
     }
 
+    static _ensureZoomModeListener(scene) {
+        if (!scene?.events || this._zoomModeScene === scene) return;
+        if (this._zoomModeScene?.events && this._onZoomModeChanged) {
+            this._zoomModeScene.events.off("zoom:mode-changed", this._onZoomModeChanged);
+        }
+
+        this._zoomModeScene = scene;
+        this._onZoomModeChanged = (mode, duration) => this.applyOverviewMode(mode, duration);
+        scene.events.on("zoom:mode-changed", this._onZoomModeChanged);
+        scene.events.once("shutdown", () => {
+            if (this._onZoomModeChanged) {
+                scene.events.off("zoom:mode-changed", this._onZoomModeChanged);
+            }
+            if (this._zoomModeScene === scene) this._zoomModeScene = null;
+        });
+    }
+
+    static applyOverviewMode(mode, duration = 160) {
+        const overview = mode === "overview";
+        this._overviewMode = overview;
+        for (const team of Object.values(Teams.teamLists || {})) {
+            const houses = Array.isArray(team?.houseList) ? team.houseList : [];
+            houses.forEach((house) => house?._setAboveBuildingOverlaysVisible?.(!overview, duration));
+        }
+    }
+
+    _isOverviewMode() {
+        return House._overviewMode || isOverviewMode(this.scene);
+    }
+
     static assignPlayerToHouse(player, team){
         const house = Teams.teamLists[team].houseList.find(h => h.canAcceptPlayer());
         if (!house) return false;
@@ -145,6 +180,10 @@ export class House {
     }
 
     updateIcons() {
+        if (this._isOverviewMode()) {
+            this.clearIcons();
+            return;
+        }
         this.clearIcons(); // always start fresh
         if (!this.occupants.length) return;
 
@@ -161,6 +200,7 @@ export class House {
             depth: UIDEPTH,
             accentColor: 0x9be7ff,
         });
+        this.iconPanel.setAlpha(0).setScale(0.82);
         this.uiContainer.add(this.iconPanel);
 
         this.uiIcons = this.occupants.map((p, i) => {
@@ -173,6 +213,7 @@ export class House {
             this.iconPanel.add(icon);
             return icon;
         });
+        animateOverlayPop(this.scene, this.iconPanel, true, { duration: 140 });
 
     }
 
@@ -210,6 +251,7 @@ export class House {
     }
 
     _spawnSleepGlyph(player, fx) {
+        if (this._isOverviewMode()) return;
         if (!player || !fx || !this.scene || !this.sprite || player.home !== this || player.state !== CONTROL_STATES.SLEEP_MODE) {
             this.stopSleepingVisual(player);
             return;
@@ -275,7 +317,7 @@ export class House {
         };
 
         this.sleepFxByPlayer.set(player, fx);
-        this._spawnSleepGlyph(player, fx);
+        if (!this._isOverviewMode()) this._spawnSleepGlyph(player, fx);
         fx.event = this.scene.time.addEvent({
             delay: 420,
             loop: true,
@@ -300,6 +342,39 @@ export class House {
         if (!this.sleepFxByPlayer?.size) return;
         for (const player of Array.from(this.sleepFxByPlayer.keys())) {
             this.stopSleepingVisual(player);
+        }
+    }
+
+    _hideSleepingGlyphs(duration = 140) {
+        if (!this.sleepFxByPlayer?.size) return;
+        for (const fx of Array.from(this.sleepFxByPlayer.values())) {
+            for (const glyph of Array.from(fx.glyphs || [])) {
+                this.scene?.tweens?.killTweensOf?.(glyph);
+                animateOverlayPop(this.scene, glyph, false, {
+                    duration,
+                    hiddenScale: 0.55,
+                    onComplete: () => {
+                        fx.glyphs.delete(glyph);
+                        glyph.destroy?.();
+                    }
+                });
+            }
+        }
+    }
+
+    _setAboveBuildingOverlaysVisible(visible = true, duration = 160) {
+        if (!visible) {
+            this.clearIcons({ animate: true, duration });
+            this._hideSleepingGlyphs(duration);
+            return;
+        }
+
+        this.sleepFxContainer?.setVisible?.(true);
+        if (this.isHovered) this.updateIcons();
+        for (const [player, fx] of Array.from(this.sleepFxByPlayer || [])) {
+            if (player?.state === CONTROL_STATES.SLEEP_MODE && player?.home === this) {
+                this._spawnSleepGlyph(player, fx);
+            }
         }
     }
 
@@ -350,17 +425,27 @@ export class House {
         Teams.assignHomelessPlayersToHouses?.(this.team);
     }
 
-    clearIcons() {
+    clearIcons(opts = {}) {
         if (this.iconPanel) {
-            this.iconPanel.destroy();
+            const panel = this.iconPanel;
             this.iconPanel = null;
+            if (opts.animate && panel?.active) {
+                animateOverlayPop(this.scene, panel, false, {
+                    duration: Math.max(0, Number(opts.duration ?? 120) || 0),
+                    onComplete: () => panel.destroy()
+                });
+            } else {
+                panel.destroy();
+            }
         }
 
-        for (const icon of this.uiIcons) {
-            if (icon?.active) icon.destroy();
-        }
+        if (!opts.animate) {
+            for (const icon of this.uiIcons) {
+                if (icon?.active) icon.destroy();
+            }
 
-        this.uiContainer.removeAll(true);
+            this.uiContainer.removeAll(true);
+        }
 
         this.uiIcons = [];
     }

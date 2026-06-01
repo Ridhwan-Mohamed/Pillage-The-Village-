@@ -91,4 +91,8 @@ export class Hunter {
         if (Raider._handleEnemyWaterRecovery(troop)) return true;
         return Raider.update(troop);
     }
+
+    static _dropPlayerChase(troop) {
+        return Raider._dropPlayerChase(troop);
+    }
 }

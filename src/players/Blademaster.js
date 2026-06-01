@@ -22,7 +22,7 @@ import blademasterSwimSidewards from 'url:../assets/players/blademaster/blademas
 
 export class Blademaster {
 
-    static speed = 100;      // slower
+    static speed = 95;
     static stamina = 0.01;
 
     static preload(scene) {

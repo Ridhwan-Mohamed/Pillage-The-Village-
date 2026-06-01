@@ -12,6 +12,22 @@ import { TutorialOverlay } from "./TutorialOverlay.js";
 
 const PAUSE_REASON = "tutorial";
 const ACTION_PAUSE_REASON = "tutorial_dialog";
+const TUTORIAL_STORAGE_RESOURCE_FIELDS = Object.freeze({
+  seeds: "seedCrop",
+  berries: "seedBerry",
+  foodAmnt: "food",
+  cleanWaterAmnt: "clean_water",
+  woodAmnt: "wood",
+  stoneAmnt: "stone",
+});
+const TUTORIAL_RESOURCE_GRANT_ORDER = Object.freeze([
+  "stoneAmnt",
+  "woodAmnt",
+  "foodAmnt",
+  "cleanWaterAmnt",
+  "seeds",
+  "berries",
+]);
 
 export class TutorialManager {
   constructor(scene) {
@@ -189,6 +205,9 @@ export class TutorialManager {
     if (step.focusParcel) {
       this._focusParcel(step.focusParcel);
     }
+    if (step.highlightTownTower) {
+      this.scene.time?.delayedCall?.(120, () => this._showTownTowerHighlight());
+    }
     if (step.hoverParcel) {
       this.scene.time?.delayedCall?.(220, () => this._setParcelHover(step.hoverParcel, true));
     }
@@ -227,13 +246,12 @@ export class TutorialManager {
       else this.scene[field] = min;
     };
     applyDelta("money", (delta) => this.scene.updateMoney?.(delta));
-    applyDelta("seeds", (delta) => this.scene.updateSeeds?.(delta));
     applyDelta("permits", (delta) => this.scene.updatePermits?.(delta));
-    applyDelta("foodAmnt");
-    applyDelta("cleanWaterAmnt");
-    applyDelta("woodAmnt");
-    applyDelta("stoneAmnt");
-    this.scene.uiScene?._refreshTopHudValues?.();
+
+    for (const field of TUTORIAL_RESOURCE_GRANT_ORDER) {
+      this._ensureStorageBackedResource(field, minimums[field]);
+    }
+    this._syncStorageBackedResourceCounters();
   }
 
   _ensureTutorialMaterials(minimums = {}) {
@@ -261,7 +279,22 @@ export class TutorialManager {
         this.scene.uiScene?._refreshTopHudValues?.();
       }
     }
-    this.scene.uiScene?._refreshTopHudValues?.();
+    this._syncStorageBackedResourceCounters();
+  }
+
+  _ensureStorageBackedResource(field, rawMinimum) {
+    const itemKey = TUTORIAL_STORAGE_RESOURCE_FIELDS[field];
+    const minimum = Math.max(0, Math.floor(Number(rawMinimum) || 0));
+    if (!itemKey || !(minimum > 0)) return;
+
+    const current = StorageManager.getStoredItemCountForTeam("1", itemKey);
+    if (current >= minimum) return;
+
+    StorageManager.grantItemToTeam("1", itemKey, minimum - current, this.scene, { silent: true });
+  }
+
+  _syncStorageBackedResourceCounters() {
+    StorageManager.syncStorageBackedResourceCounters(this.scene, "1");
   }
 
   _matchesRule(rule, action, payload = {}) {
@@ -402,7 +435,7 @@ export class TutorialManager {
   _focusParcel(slotId) {
     const slot = this.scene.parcelSpawnUI?.slots?.get?.(slotId);
     if (!slot?.container) return;
-    this._focusWorldPoint(slot.container.x, slot.container.y, 0.95);
+    this._focusWorldPoint(slot.container.x, slot.container.y);
   }
 
   _ensureDetailedMode() {
@@ -432,21 +465,32 @@ export class TutorialManager {
     const height = Math.max(1, Number(tile.lenY || 1)) * SQUARESIZE;
     const x = gridX * SQUARESIZE;
     const y = gridY * SQUARESIZE;
-    this._focusWorldPoint(x + width / 2, y + height / 2, 1.08);
+    this._focusWorldPoint(x + width / 2, y + height / 2);
     this._showWorldPulse(x, y, width, height);
   }
 
   _focusWorldPoint(worldX, worldY, zoom = null, duration = 380) {
     const cam = this.scene.cameras?.main;
     if (!cam || !Number.isFinite(worldX) || !Number.isFinite(worldY)) return;
-    const nextZoom = Number.isFinite(zoom) ? zoom : cam.zoom;
-    const scrollX = worldX - (cam.width * 0.5) / Math.max(0.0001, nextZoom);
-    const scrollY = worldY - (cam.height * 0.5) / Math.max(0.0001, nextZoom);
+    const currentZoom = Math.max(0.0001, Number(cam.zoom || 1));
+    const scrollX = worldX - (cam.width * 0.5) / currentZoom;
+    const scrollY = worldY - (cam.height * 0.5) / currentZoom;
+    const mixer = this.scene.zoomMixer;
+    if (mixer) {
+      mixer._killManagedTweensOf?.(cam);
+      mixer.targetZoom = currentZoom;
+      if (mixer.zoomVel) mixer.zoomVel.v = 0;
+      if (mixer.scrollVel) {
+        mixer.scrollVel.x = 0;
+        mixer.scrollVel.y = 0;
+      }
+      mixer.anchorWorld = { x: worldX, y: worldY };
+      mixer.anchorScreen = { x: cam.width * 0.5, y: cam.height * 0.5 };
+    }
     this.scene.tweens?.add?.({
       targets: cam,
       scrollX,
       scrollY,
-      zoom: nextZoom,
       duration,
       ease: "Cubic.easeInOut",
     });
@@ -462,7 +506,7 @@ export class TutorialManager {
     this.uiHighlight = null;
     this.worldPulseTween?.remove?.();
     this.worldPulseTween = null;
-    this.worldPulse?.destroy?.();
+    this.worldPulse?.destroy?.(true);
     this.worldPulse = null;
   }
 
@@ -538,7 +582,9 @@ export class TutorialManager {
   }
 
   _showWorldPulse(x, y, width, height) {
-    this.worldPulse?.destroy?.();
+    this.worldPulseTween?.remove?.();
+    this.worldPulseTween = null;
+    this.worldPulse?.destroy?.(true);
     const g = this.scene.add.graphics().setDepth(UIDEPTH + 18);
     g.fillStyle(0x02070d, 0.20);
     g.fillRoundedRect(x - 5, y - 5, width + 10, height + 10, 8);
@@ -555,6 +601,67 @@ export class TutorialManager {
       onComplete: () => {
         g.destroy();
         if (this.worldPulse === g) this.worldPulse = null;
+      },
+    });
+  }
+
+  _findPlayerTownTower() {
+    const towers = Teams.getTeam?.("1")?.townTowerList || [];
+    return towers.find((tower) =>
+      tower?.sprite?.active &&
+      !tower._destroyed &&
+      Math.max(0, Number(tower.health ?? 1)) > 0
+    ) || null;
+  }
+
+  _showTownTowerHighlight() {
+    const tower = this._findPlayerTownTower();
+    const sprite = tower?.sprite;
+    if (!sprite?.active) return;
+
+    this._focusWorldPoint(sprite.x, sprite.y, null, 520);
+
+    this.worldPulseTween?.remove?.();
+    this.worldPulse?.destroy?.(true);
+
+    const frameName = sprite.frame?.name;
+    const flash = this.scene.add.sprite(sprite.x, sprite.y, sprite.texture?.key, frameName)
+      .setOrigin(sprite.originX ?? 0.5, sprite.originY ?? 0.5)
+      .setDepth((sprite.depth ?? 0) + 6)
+      .setAlpha(0.72)
+      .setTintFill(0xffffff);
+    flash.setDisplaySize(sprite.displayWidth, sprite.displayHeight);
+    flash.setRotation(sprite.rotation || 0);
+    flash.setFlip?.(!!sprite.flipX, !!sprite.flipY);
+
+    const bounds = sprite.getBounds?.();
+    const outline = this.scene.add.graphics().setDepth((sprite.depth ?? 0) + 7);
+    if (bounds) {
+      outline.lineStyle(5, 0xffffff, 0.95);
+      outline.strokeRoundedRect(bounds.x - 8, bounds.y - 8, bounds.width + 16, bounds.height + 16, 8);
+      outline.lineStyle(2, 0xe0f2fe, 0.70);
+      outline.strokeRoundedRect(bounds.x - 14, bounds.y - 14, bounds.width + 28, bounds.height + 28, 12);
+    }
+
+    const group = this.scene.add.container(0, 0, [flash, outline]).setDepth((sprite.depth ?? 0) + 7);
+    this.worldPulse = group;
+    this.worldPulseTween = this.scene.tweens.add({
+      targets: group,
+      alpha: { from: 0.18, to: 1 },
+      duration: 360,
+      ease: "Sine.easeInOut",
+      yoyo: true,
+      repeat: 7,
+      onUpdate: () => {
+        if (sprite?.active && flash?.active) {
+          flash.setPosition(sprite.x, sprite.y);
+          flash.setDisplaySize(sprite.displayWidth, sprite.displayHeight);
+          flash.setRotation(sprite.rotation || 0);
+        }
+      },
+      onComplete: () => {
+        group.destroy(true);
+        if (this.worldPulse === group) this.worldPulse = null;
       },
     });
   }

@@ -1349,7 +1349,7 @@ export class mapView extends Phaser.Scene {
         SaveManager.clearRunSave();
         this._clearActiveRunPresentations();
 
-        AudioManager.playSound?.('sfx_end_stage_explosions');
+        AudioManager.playWorldSound?.('sfx_end_stage_explosions');
         this.cameras.main.shake(220, 0.004);
         if (this.clock) this.clock.paused = true;
         this.applySimulationSpeed(true);
@@ -1416,9 +1416,16 @@ export class mapView extends Phaser.Scene {
         return this._triggerStorageCollapseGameOver(analysis);
     }
 
-    _grantTownXpResources(bundle = {}) {
+    _grantTownXpResources(bundle = {}, opts = {}) {
+        const moneyFxOpts = {
+            sourceUiTarget: opts.sourceUiTarget ?? null,
+            sourceUiX: opts.sourceUiX,
+            sourceUiY: opts.sourceUiY,
+            sourceWorldX: opts.sourceWorldX,
+            sourceWorldY: opts.sourceWorldY,
+        };
         if ((bundle.money || 0) > 0) {
-            this.updateMoney(Math.max(0, Number(bundle.money || 0)));
+            this.updateMoney(Math.max(0, Number(bundle.money || 0)), moneyFxOpts);
         }
 
         if ((bundle.permits || 0) > 0) {
@@ -1471,6 +1478,22 @@ export class mapView extends Phaser.Scene {
 
         if ((bundle.berries || 0) > 0) {
             grantStorageItem("seedBerry", bundle.berries, "berry seeds");
+        }
+
+        if (opts.showAlert) {
+            const rewardParts = [];
+            if ((bundle.money || 0) > 0) rewardParts.push(`+$${Math.max(0, Number(bundle.money || 0))}`);
+            if ((bundle.permits || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.permits || 0))} permit${Number(bundle.permits) === 1 ? "" : "s"}`);
+            if ((bundle.wood || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.wood || 0))} wood`);
+            if ((bundle.stone || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.stone || 0))} stone`);
+            if ((bundle.food || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.food || 0))} food`);
+            if ((bundle.cleanWater || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.cleanWater || 0))} water`);
+            if ((bundle.seeds || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.seeds || 0))} seeds`);
+            if ((bundle.berries || 0) > 0) rewardParts.push(`+${Math.max(0, Number(bundle.berries || 0))} berry seeds`);
+            if (rewardParts.length) {
+                const label = opts.label ? `${opts.label}: ` : "Goal reward: ";
+                showAlert(this, `${label}${rewardParts.join(", ")}`, opts.alertColor || "#fff4cf", 2200);
+            }
         }
 
         return {
@@ -2329,6 +2352,8 @@ export class mapView extends Phaser.Scene {
         const effective = this.getEffectiveSimulationSpeed();
         const engineSpeed = this._simulationSpeedReady ? effective : 1;
 
+        AudioManager.setWorldAudioPaused?.(effective <= 0);
+
         if (!force && this._appliedSimulationSpeed === effective && this._appliedEngineSimSpeed === engineSpeed) {
             return effective;
         }
@@ -2748,6 +2773,7 @@ export class mapView extends Phaser.Scene {
 
     getUpcomingNightHordePlan() {
         if (!StageState.endlessMode || this._hordeRewardInProgress) return null;
+        if (Number(this.clock?.day || 1) < 2) return null;
         if (this._isShockerBossDay() && !this._isShockerBossActive()) {
             return {
                 hordeIndex: this.getCurrentHordeIndex(),
@@ -2760,7 +2786,6 @@ export class mapView extends Phaser.Scene {
             };
         }
         if (this._activeNightHorde?.plan) return this._activeNightHorde.plan;
-        if (Number(this.clock?.day || 1) < 2) return null;
         return this._getNightHordePlan();
     }
 
@@ -2905,11 +2930,12 @@ export class mapView extends Phaser.Scene {
             dusk: "#ffd6a5",
             night: "#fecaca",
         };
+        const isFreeFirstNight = Math.max(1, Number(this.clock?.day || 1)) === 1;
         const labels = {
             dawn: "Dawn: tower income and village rewards",
             day: "Day: build, gather, and expand",
-            dusk: "Dusk: prepare for the coastal assault",
-            night: "Night: defend town, parcels stay open",
+            dusk: isFreeFirstNight ? "Dusk: free first night, no raiders tonight" : "Dusk: prepare for the coastal assault",
+            night: isFreeFirstNight ? "Free first night: no raiders tonight" : "Night: defend town, parcels stay open",
         };
 
         const label = labels[phaseKey];
@@ -2921,6 +2947,10 @@ export class mapView extends Phaser.Scene {
     handleDuskStart() {
         if (!StageState.endlessMode || this._hordeRewardInProgress) return;
         SaveManager.queueAutosave("phase_dusk");
+        if (Number(this.clock?.day || 1) < 2) {
+            showAlert(this, "Free first night: no raiders tonight. First horde arrives on night 2.", "#a7f3d0", 2600);
+            return;
+        }
         if (this._isShockerBossDay()) {
             showAlert(this, "Stormfront detected. A boss arrives tonight.", "#d8b4fe", 2600);
             this.uiScene?.flashStormLightning?.(180, 0.26);
@@ -2938,7 +2968,7 @@ export class mapView extends Phaser.Scene {
         SaveManager.queueAutosave("phase_night");
         if (this._activeNightHorde?.startedOnDay === this.clock?.day) return;
         if (Number(this.clock?.day || 1) < 2) {
-            showAlert(this, "Free day: the first horde arrives tomorrow night", "#a7f3d0");
+            showAlert(this, "Free first night: no raiders tonight. First horde arrives tomorrow night.", "#a7f3d0");
             return;
         }
         if (this._isShockerBossDay()) {
@@ -3003,7 +3033,7 @@ export class mapView extends Phaser.Scene {
 
         this._clearActiveRunPresentations();
 
-        AudioManager.playSound?.('sfx_end_stage_explosions');
+        AudioManager.playWorldSound?.('sfx_end_stage_explosions');
         this.cameras.main.shake(260, 0.006);
         if (this.clock) this.clock.paused = true;
         this.applySimulationSpeed(true);
@@ -3079,6 +3109,7 @@ export class mapView extends Phaser.Scene {
     restartToMainMenu({ hostScene } = {}) {
         if (this._restartToMainMenuInProgress) return;
         this._restartToMainMenuInProgress = true;
+        this.setSimulationPause?.("restart_to_main_menu", true);
         MainMenu.queueRestartReveal?.({
             color: 0x64b9ff,
             fadeOutDuration: 920,
@@ -5974,7 +6005,7 @@ cancelFarmSelection(exitFarmMode = false) {
             }
 
             if (addedCount > 0) {
-                AudioManager.playBuildingComplete({ volume: 0.2 });
+                AudioManager.playBuildingComplete({ volume: 0.2, world: true });
                 this.tutorialManager?.notifyAction?.("farm.planted", {
                     count: addedCount,
                     minX,
@@ -6636,7 +6667,7 @@ cancelFarmSelection(exitFarmMode = false) {
             onComplete: () => {
                 this.zoomMixer?.smoothCenterZoomTo(1, 200);
 
-                AudioManager.playSound('sfx_end_stage_explosions');
+                AudioManager.playWorldSound('sfx_end_stage_explosions');
                 this.cameras.main.shake(1000, 0.01);
 
                 this.tweens.add({

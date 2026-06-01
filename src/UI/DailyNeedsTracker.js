@@ -7,15 +7,48 @@ import { UI_ITEM_TYPES } from "./UIConstants.js";
 export class DailyNeedsTracker {
     static scene = null;
     static NEEDS_EMOTE_DELAY_MS = 1050;
+    static _onStorageChanged = null;
 
     static init(scene) {
+        if (this.scene?.events && this._onStorageChanged) {
+            this.scene.events.off("storage:updated", this._onStorageChanged);
+            this.scene.events.off("storage:added", this._onStorageChanged);
+            this.scene.events.off("storage:removed", this._onStorageChanged);
+        }
         this.scene = scene;
         this.uiElements = [];
+        this._onStorageChanged = () => this.syncStorageBackedResourceCounters(scene, "1");
+        scene?.events?.on?.("storage:updated", this._onStorageChanged);
+        scene?.events?.on?.("storage:added", this._onStorageChanged);
+        scene?.events?.on?.("storage:removed", this._onStorageChanged);
+        scene?.events?.once?.("shutdown", () => {
+            if (!this._onStorageChanged) return;
+            scene.events.off("storage:updated", this._onStorageChanged);
+            scene.events.off("storage:added", this._onStorageChanged);
+            scene.events.off("storage:removed", this._onStorageChanged);
+        });
+    }
+
+    static getLivingActiveTroops(teamNumber = "1") {
+        const team = Teams.teamLists?.[`${teamNumber}`] ?? Teams.teamLists?.[teamNumber];
+        const players = Array.isArray(team?.playerList) ? team.playerList : [];
+        return players.filter((player) => (
+            player &&
+            player.active !== false &&
+            Number(player.health ?? 1) > 0
+        ));
+    }
+
+    static getNeedCount(teamNumber = "1") {
+        return this.getLivingActiveTroops(teamNumber).length;
+    }
+
+    static syncStorageBackedResourceCounters(scene = this.scene, teamNumber = "1") {
+        StorageManager.syncStorageBackedResourceCounters(scene, teamNumber);
     }
 
     static getValues() {
-        const team = Teams.teamLists["1"];
-        const troopCount = team?.playerList?.length || 0;
+        const troopCount = this.getNeedCount("1");
         return [
             { key: "foodIcon", have: this.scene.foodAmnt, need: troopCount },
             { key: "waterIcon", have: this.scene.cleanWaterAmnt, need: troopCount },
@@ -73,8 +106,7 @@ export class DailyNeedsTracker {
         if (!this.scene) return;
 
         const s = this.scene;
-        const team = Teams.teamLists["1"];
-        const troopCount = team?.playerList?.length || 0;
+        const troopCount = this.getNeedCount("1");
 
         const resolved = this._resolveTrackedResource(item, count);
         const type = resolved.type;
@@ -161,19 +193,63 @@ export class DailyNeedsTracker {
         });
     }
 
+    static _getFoodConsumptionOrder() {
+        const defs = Object.values(UI_ITEM_TYPES || {})
+            .filter((item) => StorageManager.getFoodEquivalentValue(item) > 0);
+        return defs.sort((a, b) => {
+            if (a.name === UI_ITEM_TYPES.food.name) return -1;
+            if (b.name === UI_ITEM_TYPES.food.name) return 1;
+            return a.name.localeCompare(b.name);
+        });
+    }
+
+    static _consumeFoodFromStorage(teamNumber, needCount) {
+        const required = Math.max(0, Math.floor(Number(needCount) || 0));
+        if (required <= 0) return 0;
+
+        let consumedEquivalent = 0;
+        for (const itemDef of this._getFoodConsumptionOrder()) {
+            const value = StorageManager.getFoodEquivalentValue(itemDef);
+            if (!(value > 0)) continue;
+
+            const remainingNeed = required - consumedEquivalent;
+            if (remainingNeed <= 0) break;
+
+            const itemUnitsNeeded = Math.ceil(remainingNeed / value);
+            const consumedItems = StorageManager.consumeItemFromStorage(teamNumber, itemDef, itemUnitsNeeded);
+            consumedEquivalent += consumedItems * value;
+        }
+
+        return Math.min(required, Math.max(0, Math.floor(consumedEquivalent)));
+    }
+
+    static _consumeDrinkFromStorage(teamNumber, needCount) {
+        const required = Math.max(0, Math.floor(Number(needCount) || 0));
+        if (required <= 0) return 0;
+        return StorageManager.consumeItemFromStorage(teamNumber, UI_ITEM_TYPES.clean_water, required);
+    }
+
     static consumeResources() {
         const team = Teams.teamLists["1"];
         if (!team) return;
+        this.syncStorageBackedResourceCounters(this.scene, "1");
 
-        const players = team.playerList;
+        const currentDay = Math.max(1, Math.floor(Number(this.scene?.clock?.day || 1)));
+        if (this.scene?.clock && currentDay === 1) {
+            if (!this.scene._dailyNeedsFreeDayAnnounced) {
+                this.scene._dailyNeedsFreeDayAnnounced = true;
+                showAlert(this.scene, "Free first day: no food or water consumed.", "#a7f3d0", 2200);
+            }
+            return { skipped: true, reason: "day_one" };
+        }
+
+        const players = this.getLivingActiveTroops("1");
         if (!players.length) return;
 
         const troopCount = players.length;
-        const totalFoodEaten = StorageManager.consumeItemFromStorage(1, UI_ITEM_TYPES.food, troopCount);
-        const totalWaterDrank = StorageManager.consumeItemFromStorage(1, UI_ITEM_TYPES.clean_water, troopCount);
-
-        this.updateUIItems(UI_ITEM_TYPES.food, totalFoodEaten, true);
-        this.updateUIItems(UI_ITEM_TYPES.clean_water, totalWaterDrank, true);
+        const totalFoodEaten = this._consumeFoodFromStorage("1", troopCount);
+        const totalWaterDrank = this._consumeDrinkFromStorage("1", troopCount);
+        this.syncStorageBackedResourceCounters(this.scene, "1");
 
         const scene = this.scene;
         const cam = scene.cameras.main;

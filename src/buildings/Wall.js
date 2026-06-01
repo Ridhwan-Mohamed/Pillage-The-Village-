@@ -165,8 +165,9 @@ export class Wall {
       w.collider.setAlpha(0);
 
       // IMPORTANT: use setSize (physics), then refreshBody (bakes it)
-      w.collider.setSize(SQUARESIZE, SQUARESIZE);
+      w.collider.setDisplaySize(SQUARESIZE, SQUARESIZE);
       w.collider.refreshBody();
+      w.collider.body?.setSize?.(SQUARESIZE, SQUARESIZE, true);
 
       // tie back to wall
       w.collider.wallRef = w;

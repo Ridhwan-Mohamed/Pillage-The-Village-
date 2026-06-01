@@ -39,9 +39,9 @@ function getPriceTable(pricesMaybe) {
 function getRepeatBuyInflation(card = null) {
   const explicit = Number(card?.repeatBuyInflation);
   if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-  if (card?.marketSection === MARKET_CARD_SECTION.RECOVERY) return 0.2;
-  if (card?.marketSection === MARKET_CARD_SECTION.ATTACK) return 0.3;
-  return 0.25;
+  if (card?.marketSection === MARKET_CARD_SECTION.RECOVERY) return 0.1;
+  if (card?.marketSection === MARKET_CARD_SECTION.ATTACK) return 0.15;
+  return 0.15;
 }
 
 function getMoney(scene) {

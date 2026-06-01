@@ -159,6 +159,11 @@ export class Raider {
             return false;
         }
 
+        if (!troop.task && troop._raidMissionTask && Raider._isBuildingTaskValid(troop._raidMissionTask)) {
+            Raider._resumeMission(troop);
+            return false;
+        }
+
         // -------------------------
         // Helpers
         // -------------------------
@@ -218,10 +223,12 @@ export class Raider {
 
             const canReach = (bx, by) => {
                 if (!rs?.canReachWorldToWorld) return true; // fallback if region system isn't ready
+                rs.ensureUpToDate?.();
+                const start = Player._regionCheckPointForTroop?.(troop, troop.x, troop.y);
                 const wx = bx * SQUARESIZE + SQUARESIZE / 2;
                 const wy = by * SQUARESIZE + SQUARESIZE / 2;
                 // IMPORTANT: use CURRENT location, not spawn
-                return rs.canReachWorldToWorld(troop.x, troop.y, wx, wy);
+                return rs.canReachWorldToWorld(start?.x ?? troop.x, start?.y ?? troop.y, wx, wy);
             };
 
             // Two buckets: reachable and blocked (blocked might be solvable via siege)
@@ -338,10 +345,13 @@ export class Raider {
                 return true;
             }
 
-            // 2) If unreachable by path, attempt siege breach plan for this POI
+            // 2) If pathing failed but the raider is already positioned to hit it, start now.
+            if (Raider._startMissionDestroyInPlace(troop, task)) return true;
+
+            // 3) If unreachable by path, attempt siege breach plan for this POI
             if (Raider.beginSiegeForTask(troop, task)) return true;
 
-            // 3) If no siege plan possible, fall back to roaming
+            // 4) If no siege plan possible, fall back to roaming
             roamToCenterEnemy();
             return false;
         };
@@ -705,6 +715,62 @@ export class Raider {
         return Phaser.Math.Distance.Between(troop.x, troop.y, center.x, center.y);
     }
 
+    static _distanceToTaskFootprint(troop, task) {
+        const fp = Raider._taskToFootprint(task);
+        if (!troop?.active || !fp) return Infinity;
+
+        const width = Math.max(1, Number(fp.w ?? 1));
+        const height = Math.max(1, Number(fp.h ?? 1));
+        const minX = Number(fp.x) * SQUARESIZE;
+        const minY = Number(fp.y) * SQUARESIZE;
+        const maxX = (Number(fp.x) + width) * SQUARESIZE;
+        const maxY = (Number(fp.y) + height) * SQUARESIZE;
+        if (![minX, minY, maxX, maxY].every(Number.isFinite)) return Infinity;
+
+        const closestX = Math.max(minX, Math.min(troop.x, maxX));
+        const closestY = Math.max(minY, Math.min(troop.y, maxY));
+        return Phaser.Math.Distance.Between(troop.x, troop.y, closestX, closestY);
+    }
+
+    static _isInBuildingDestroyRange(troop, task) {
+        if (!troop?.active || !Raider._isBuildingTaskValid(task)) return false;
+        const distance = Raider._distanceToTaskFootprint(troop, task);
+        if (!Number.isFinite(distance)) return false;
+
+        const weaponRange = Number(troop.weapon?.range ?? 0);
+        const range = troop.isBomber
+            ? SQUARESIZE * 1.35
+            : Math.max(SQUARESIZE * 0.75, Number.isFinite(weaponRange) ? weaponRange : 0);
+        return distance <= range;
+    }
+
+    static _startMissionDestroyInPlace(troop, task) {
+        if (!troop?.active || !Raider._isBuildingTaskValid(task)) return false;
+        if (!Raider._isInBuildingDestroyRange(troop, task)) return false;
+        if (Manager.tooManyAssigned?.(task, CONTROL_STATES.DESTROY_MODE)) return false;
+
+        if (troop.task && troop.task !== task && typeof troop.task.assigned === "number" && troop.task.assigned > 0) {
+            troop.task.assigned -= 1;
+        }
+
+        Raider._rememberMission(troop, task);
+        fightManager.clearAttackRecovery?.(troop);
+        troop.timer?.remove?.(false);
+        troop.timer = null;
+        troop.roam = false;
+        troop.task = task;
+        task.assigned = Math.max(0, Number(task.assigned || 0)) + 1;
+        troop.destX = Math.floor(troop.x / SQUARESIZE);
+        troop.destY = Math.floor(troop.y / SQUARESIZE);
+        troop.finalPos = null;
+        troop.currentPath?.splice?.(0);
+        troop.body?.setVelocity?.(0, 0);
+        Teams.movePlayerState(troop, CONTROL_STATES.DESTROY_MODE);
+        Manager._setTaskMeta?.(troop, task, CONTROL_STATES.DESTROY_MODE, null);
+        Player.doAction?.(troop);
+        return true;
+    }
+
     static _canAggroPlayerTargets(troop) {
         return !!(troop?.active && !troop?.isBomber);
     }
@@ -759,7 +825,7 @@ export class Raider {
         const dist = Phaser.Math.Distance.Between(troop.x, troop.y, target.x, target.y);
         const immediate = dist <= Math.max((troop.weapon?.range || 0) + 14, SQUARESIZE * 0.9);
         if (!opts.retaliation && !immediate && now < Number(troop._nextPlayerChaseAt || 0)) return false;
-        if (Map.enemyRegionSystem?.canReachWorldToWorld && !Map.enemyRegionSystem.canReachWorldToWorld(troop.x, troop.y, target.x, target.y)) {
+        if (!Player._canReachWorldForTroop?.(troop, target.x, target.y)) {
             return false;
         }
         return true;
@@ -818,7 +884,7 @@ export class Raider {
             if (Raider._distanceFromMission(troop) > Raider.PLAYER_CHASE_MAX_MISSION_DIST) return true;
         }
 
-        if (Map.enemyRegionSystem?.canReachWorldToWorld && !Map.enemyRegionSystem.canReachWorldToWorld(troop.x, troop.y, target.x, target.y)) {
+        if (!Player._canReachWorldForTroop?.(troop, target.x, target.y)) {
             return true;
         }
 
@@ -832,6 +898,7 @@ export class Raider {
         troop._nextPlayerChaseAt = now + Raider.PLAYER_CHASE_COOLDOWN_MS;
         troop.forcedTarget = null;
         troop.track = null;
+        fightManager.clearAttackRecovery?.(troop);
         troop.currentPath?.splice?.(0);
         troop.body?.setVelocity?.(0, 0);
         CombatSpacingCoordinator.clearTroopFocus(troop);
@@ -849,13 +916,19 @@ export class Raider {
 
         troop.task = null;
         troop.roam = false;
+        fightManager.clearAttackRecovery?.(troop);
+        troop.currentPath?.splice?.(0);
+        troop.body?.setVelocity?.(0, 0);
         if (Manager.assignTaskToTroop(troop, task, CONTROL_STATES.DESTROY_MODE)) {
+            return true;
+        }
+        if (Raider._startMissionDestroyInPlace(troop, task)) {
             return true;
         }
         if (Raider.beginSiegeForTask(troop, task)) {
             return true;
         }
-        troop._raidMissionTask = null;
+        Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
         return false;
     }
 
@@ -891,7 +964,6 @@ export class Raider {
         if (!(radius > 0) || !Player.scene?.physics?.overlapCirc) return null;
 
         const neighbours = Player.scene.physics.overlapCirc(troop.x, troop.y, radius) || [];
-        const regionSystem = Map.enemyRegionSystem;
         const candidates = [];
 
         neighbours.forEach(body => {
@@ -899,9 +971,7 @@ export class Raider {
             const target = body.gameObject;
             if (!target?.active || !target?.body) return;
             if (!Player._isCombatTargetableUnit?.(target)) return;
-            if (regionSystem?.canReachWorldToWorld && !regionSystem.canReachWorldToWorld(troop.x, troop.y, target.x, target.y)) {
-                return;
-            }
+            if (!Player._canReachWorldForTroop?.(troop, target.x, target.y)) return;
             if (!Raider._canRoleChaseTarget(troop, target, { onMission })) return;
 
             candidates.push(target);
@@ -1183,6 +1253,7 @@ export class Raider {
 
         fightManager.clearAttackRecovery(troop);
         fightManager.clearHitReaction(troop);
+        Player._dropTargetingAgainstUnit?.(troop);
         Player._playDeathAnimation?.(troop);
         Player._destroyMiniBars(troop)
         if (!silentStageCleanup) {

@@ -85,20 +85,22 @@ const FOUNDATION_TRACKS = Object.freeze({
   ]),
   economy: Object.freeze([
     {
-      uniqueKey: "econ_stock_wood_12",
-      family: "stockpile_wood",
+      uniqueKey: "econ_wood_gather_foundation_12",
+      family: "gather_wood",
       title: "Stock The Yard",
-      description: "Reach 12 wood in storage or hand.",
-      metric: "wood",
+      description: "Gather 12 wood after this goal appears.",
+      metric: "woodGathered",
+      mode: "delta",
       target: 12,
       reward: { xp: 14, money: 35 },
     },
     {
-      uniqueKey: "econ_stock_stone_10",
-      family: "stockpile_stone",
+      uniqueKey: "econ_stone_gather_foundation_10",
+      family: "gather_stone",
       title: "Stone Reserve",
-      description: "Reach 10 stone for future builds.",
-      metric: "stone",
+      description: "Mine 10 stone after this goal appears.",
+      metric: "stoneGathered",
+      mode: "delta",
       target: 10,
       reward: { xp: 14, money: 35 },
     },
@@ -112,11 +114,12 @@ const FOUNDATION_TRACKS = Object.freeze({
       reward: { xp: 10, seeds: 4 },
     },
     {
-      uniqueKey: "econ_stock_seeds_18",
-      family: "stockpile_seeds",
+      uniqueKey: "econ_seed_gather_foundation_18",
+      family: "gather_seeds",
       title: "Seed Basket",
-      description: "Reach 18 crop seeds to keep fields moving.",
-      metric: "seeds",
+      description: "Gather 18 crop seeds after this goal appears.",
+      metric: "seedsGathered",
+      mode: "delta",
       target: 18,
       reward: { xp: 12, money: 25 },
     },
@@ -357,8 +360,12 @@ export class AchievementSystem {
       let nextIndex = 0;
 
       while (nextIndex < track.length) {
+        const config = { ...track[nextIndex] };
+        if (config.mode === "delta" && config.baseline == null) {
+          config.baseline = this.getMetricValue(config.metric);
+        }
         const candidate = this._makeCandidate(slot, {
-          ...track[nextIndex],
+          ...config,
           foundationIndex: nextIndex,
           foundation: true,
         });
@@ -541,7 +548,11 @@ export class AchievementSystem {
 
     const hasBundle = Object.values(resourceBundle).some((value) => value > 0);
     if (hasBundle) {
-      this.scene?._grantTownXpResources?.(resourceBundle);
+      this.scene?._grantTownXpResources?.(resourceBundle, {
+        showAlert: true,
+        label: goal.title || "Goal reward",
+        sourceUiTarget: this.scene?.uiScene?.achievementBoard?.root ?? null,
+      });
     }
   }
 
@@ -603,8 +614,12 @@ export class AchievementSystem {
 
     while (program.foundationIndex < track.length) {
       const index = program.foundationIndex;
+      const config = { ...track[index] };
+      if (config.mode === "delta" && config.baseline == null) {
+        config.baseline = this.getMetricValue(config.metric);
+      }
       const candidate = this._makeCandidate(slot, {
-        ...track[index],
+        ...config,
         foundation: true,
         foundationIndex: index,
         weight: 99,
@@ -744,9 +759,6 @@ export class AchievementSystem {
     const seedsGathered = this.getMetricValue("seedsGathered");
     const berriesGathered = this.getMetricValue("berriesGathered");
     const marketPurchases = this.getMetricValue("marketPurchases");
-    const wood = this.getMetricValue("wood");
-    const stone = this.getMetricValue("stone");
-    const seeds = this.getMetricValue("seeds");
     const berries = this.getMetricValue("berries");
     const food = this.getMetricValue("food");
     const cleanWater = this.getMetricValue("cleanWater");
@@ -849,72 +861,6 @@ export class AchievementSystem {
         },
         repeatable: true,
         weight: 0.84,
-      }));
-    }
-
-    const woodTarget = nextMilestone(wood, [18, 24, 32, 40, 52, 64], 12);
-    candidates.push(this._makeCandidate("economy", {
-      uniqueKey: `econ_stock_wood_${woodTarget}`,
-      family: "stockpile_wood",
-      title: "Timber Stack",
-      description: `Hold ${woodTarget} wood in storage or hand.`,
-      metric: "wood",
-      target: woodTarget,
-      reward: {
-        xp: 12 + Math.floor(woodTarget / 2),
-        money: 20 + woodTarget,
-      },
-      repeatable: true,
-      weight: 0.86,
-    }));
-
-    const stoneTarget = nextMilestone(stone, [16, 22, 30, 40, 52], 10);
-    candidates.push(this._makeCandidate("economy", {
-      uniqueKey: `econ_stock_stone_${stoneTarget}`,
-      family: "stockpile_stone",
-      title: "Quarry Cache",
-      description: `Hold ${stoneTarget} stone in storage or hand.`,
-      metric: "stone",
-      target: stoneTarget,
-      reward: {
-        xp: 12 + Math.floor(stoneTarget / 2),
-        money: 20 + stoneTarget,
-      },
-      repeatable: true,
-      weight: 0.86,
-    }));
-
-    const seedTarget = nextMilestone(seeds, [22, 30, 42, 56, 72], 14);
-    candidates.push(this._makeCandidate("economy", {
-      uniqueKey: `econ_stock_seeds_${seedTarget}`,
-      family: "stockpile_seeds",
-      title: "Seed Vault",
-      description: `Hold ${seedTarget} crop seeds.`,
-      metric: "seeds",
-      target: seedTarget,
-      reward: {
-        xp: 12 + Math.floor(seedTarget / 3),
-        money: 16 + Math.floor(seedTarget * 0.8),
-      },
-      repeatable: true,
-      weight: 0.8,
-    }));
-
-    if (berryRoutesOpened) {
-      const berryTarget = nextMilestone(berries, [6, 10, 14, 20], 4);
-      candidates.push(this._makeCandidate("economy", {
-        uniqueKey: `econ_stock_berries_${berryTarget}`,
-        family: "stockpile_berries",
-        title: "Berry Basket",
-        description: `Hold ${berryTarget} berry seeds.`,
-        metric: "berries",
-        target: berryTarget,
-        reward: {
-          xp: 12 + (berryTarget * 2),
-          money: 16 + (berryTarget * 3),
-        },
-        repeatable: true,
-        weight: 0.72,
       }));
     }
 
@@ -1221,6 +1167,21 @@ export class AchievementSystem {
     return this.getProgress(goal).done;
   }
 
+  _isDeprecatedResourceStockpileGoal(goal) {
+    const family = String(goal?.family || "");
+    const key = String(goal?.uniqueKey || "");
+    return (
+      family === "stockpile_wood" ||
+      family === "stockpile_stone" ||
+      family === "stockpile_seeds" ||
+      family === "stockpile_berries" ||
+      key.startsWith("econ_stock_wood_") ||
+      key.startsWith("econ_stock_stone_") ||
+      key.startsWith("econ_stock_seeds_") ||
+      key.startsWith("econ_stock_berries_")
+    );
+  }
+
   _completeGoal(goal) {
     if (!goal) return false;
     const completedSnapshot = this._snapshotGoal(goal);
@@ -1245,6 +1206,12 @@ export class AchievementSystem {
   }
 
   update(force = false) {
+    if (Array.isArray(this.state.activeGoals)) {
+      const before = this.state.activeGoals.length;
+      this.state.activeGoals = this.state.activeGoals.filter((goal) => !this._isDeprecatedResourceStockpileGoal(goal));
+      if (this.state.activeGoals.length !== before) force = true;
+    }
+
     let changed = this._ensureActiveSlots();
     let safety = 0;
 

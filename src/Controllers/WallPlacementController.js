@@ -115,8 +115,8 @@ _initDoorPhysicsOnce() {
         if (door.__nextDoorSfxAt == null) door.__nextDoorSfxAt = 0;
 
         if (now >= door.__nextDoorSfxAt) {
-          if (shouldOpen) AudioManager.playSound("sfx_door_open", { volume: 0.26 });
-          else AudioManager.playSound("sfx_door_close", { volume: 0.26 });
+          if (shouldOpen) AudioManager.playWorldSound("sfx_door_open", { volume: 0.26 });
+          else AudioManager.playWorldSound("sfx_door_close", { volume: 0.26 });
 
           door.__nextDoorSfxAt = now + 140; // ms; tune
         }

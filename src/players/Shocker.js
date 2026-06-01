@@ -397,7 +397,7 @@ export class Shocker {
             if (target.health <= 0) {
                 Player._cleanupCombatTicketForTarget?.(troop.body?.team, target);
                 Player.destroyPlayer(target);
-                if (wasFocusedTarget) {
+                if (wasFocusedTarget && Shocker._isFocusedPlayerTarget(troop, target)) {
                     Shocker._dropPlayerChase(troop);
                 }
             }
@@ -594,7 +594,10 @@ export class Shocker {
         const dist = Phaser.Math.Distance.Between(troop.x, troop.y, point.x, point.y);
         if (dist > range) return false;
         if (!Map.enemyRegionSystem?.canReachWorldToWorld) return true;
-        return !!Map.enemyRegionSystem.canReachWorldToWorld(troop.x, troop.y, point.x, point.y);
+        Map.enemyRegionSystem.ensureUpToDate?.();
+        const from = Player._regionCheckPointForTroop?.(troop, troop.x, troop.y);
+        if (!from) return false;
+        return !!Map.enemyRegionSystem.canReachWorldToWorld(from.x, from.y, point.x, point.y);
     }
 
     static _descriptorId(entry) {

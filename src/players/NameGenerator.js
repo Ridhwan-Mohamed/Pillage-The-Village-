@@ -1,24 +1,28 @@
 export const NameGenerator = {
     firstNames: [
-        'Aaliyah', 'Mateo', 'Sakura', 'Omar', 'Zara',
-        'Kofi', 'Anika', 'Wei', 'Dimitri', 'Fatima',
-        'Noor', 'Diego', 'Yara', 'Min-Jun', 'Chloe',
-        'Amir', 'Leila', 'Ibrahim', 'Tariq', 'Mei',
-        'Ravi', 'Soraya', 'Niko', 'Lucía', 'Jin',
-        'Adanna', 'Liam', 'Nadia', 'Haruto', 'Elsa',
-        'Ayana', 'Sven', 'Zainab', 'Théo', 'Ren', 
-        'Sofia', 'Arjun', 'Hana', 'Milo', 'Sanaa'
+        'Adam', 'Adrian', 'Ahmed', 'Amir', 'Arjun',
+        'Arthur', 'Benjamin', 'Carlos', 'Connor', 'Dante',
+        'David', 'Diego', 'Dimitri', 'Elias', 'Emil',
+        'Ethan', 'Felix', 'Finn', 'Gabriel', 'Haruto',
+        'Hugo', 'Ibrahim', 'Isaac', 'Ivan', 'Jack',
+        'Jamal', 'Javier', 'Jin', 'Jonas', 'Kaito',
+        'Kenji', 'Kofi', 'Leo', 'Liam', 'Lucas',
+        'Malik', 'Marco', 'Mateo', 'Miguel', 'Milo',
+        'Junho', 'Niko', 'Omar', 'Oscar', 'Pavel',
+        'Rafael', 'Ravi', 'Reuben', 'Samuel', 'Santiago',
+        'Sebastian', 'Sergio', 'Sven', 'Tariq', 'Theo',
+        'Tomas', 'Victor', 'Zhihao', 'Youssef', 'Zane'
     ],
 
     lastNames: [
         'Okafor', 'Fernandez', 'Nguyen', 'Kowalski', 'Kim',
         'Patel', 'Dubois', 'Abdullah', 'Takahashi', 'Singh',
-        'Almeida', 'Nakamura', 'Mensah', 'Yilmaz', 'O’Sullivan',
+        'Almeida', 'Nakamura', 'Mensah', 'Yilmaz', 'OSullivan',
         'Chowdhury', 'Petrov', 'Garcia', 'Zhou', 'Bakker',
         'Moreno', 'Da Silva', 'Toure', 'Leclerc', 'Rahman',
         'Rossi', 'Mwangi', 'Chen', 'Ahmadi', 'Bautista',
-        'Kaur', 'Dlamini', 'López', 'Müller', 'Nasr',
-        'El-Sayed', 'Ivanova', 'Hashimoto', 'Dubey', 'Almasi'
+        'Khan', 'Dlamini', 'Lopez', 'Muller', 'Nasr',
+        'El-Sayed', 'Ivanov', 'Hashimoto', 'Dubey', 'Almasi'
     ],
 
     generate() {

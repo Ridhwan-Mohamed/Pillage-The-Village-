@@ -17,6 +17,7 @@ import {
 } from "../UI/BuildingTheme";
 import { VisibilitySystem } from "../UI/VisibilitySystem";
 import { playBuildingCollapseSmoke } from "../FX/SmokeClearing";
+import { getBalanceDay, getTownTowerDawnIncome } from "../balance/GameBalance";
 
 /**
  * TowerBuilding
@@ -40,7 +41,7 @@ export class TowerBuilding {
     const towers = this.getLivingTownTowers(teamNumber);
     if (!towers.length) return null;
 
-    const money = towers.length * 150;
+    const money = getTownTowerDawnIncome(scene, towers.length);
     const skippedStarterPermits = opts.skipStarterPermits
       ? towers.filter((tower) => tower.isStarterTownTower).length
       : 0;
@@ -372,8 +373,11 @@ export class TowerBuilding {
 
     const hp = `HP: ${Math.max(0, this.health)}/${this.maxHealth}`;
     if (this.isTownTower) {
+      const money = getTownTowerDawnIncome(this.scene, 1);
+      const day = getBalanceDay(this.scene);
+      const permitText = this.isStarterTownTower && day === 1 ? "permit starts day 2" : "+1 permit";
       this.panelText1.setText(`Town Tower ${hp}`);
-      this.panelText2.setText("Dawn: +$150 +1 permit");
+      this.panelText2.setText(`Dawn: +$${money} ${permitText}`);
       return;
     }
 

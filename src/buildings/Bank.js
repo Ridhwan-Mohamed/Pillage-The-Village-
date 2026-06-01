@@ -88,13 +88,12 @@ export class Bank {
     const h = lenY * SQUARESIZE;
     this.collider = this.scene.physics.add.staticImage(px + w / 2, py + h / 2, "barrier");
     this.collider.setAlpha(0);
-    this.collider.setSize(w, h);
+    this.collider.setDisplaySize(w, h);
     this.collider.refreshBody();
     this.collider.isBuilding = true;
     this.collider.team = this.team;
     this.collider.buildingRef = this;
     this.collider.body.setSize(w, h, true);
-    this.collider.refreshBody();
     Map.structureBarrier?.add(this.collider);
 
     // building manager hooks

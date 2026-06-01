@@ -233,7 +233,7 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "brawler_intro",
     speaker: "brawler",
-    text: "I'm the Brawler. I defend the town when raiders show up and help keep your people alive through the night.",
+    text: "I'm one of the fighters. I defend the town when raiders show up and help keep your people alive through the night.",
   },
   {
     id: "buy_brawler",
@@ -256,16 +256,20 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "core_loop_defend",
     speaker: "farmer",
-    text: "Defend the night, then expand again.",
+    text: "Your first night is free: no raiders tonight. After that, defend the night, then expand again.",
   },
   {
     id: "town_towers",
     speaker: "farmer",
+    forceDetailed: true,
+    highlightTownTower: true,
     text: "One more thing: Town Towers are the heartbeat of your town.",
   },
   {
     id: "town_towers_rewards",
     speaker: "farmer",
+    forceDetailed: true,
+    highlightTownTower: true,
     text: "Each one gives you money and 1 expansion permit at dawn, so towns that keep building them usually keep growing.",
   },
   {

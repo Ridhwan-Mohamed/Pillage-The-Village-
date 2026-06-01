@@ -28,6 +28,8 @@ export class Farmer {
     static speed = 85;
     static stamina = 0.005;
     static maxWaterPailCarry = 2;
+    static WATER_ASSIGN_FAILURE_COOLDOWN_MS = 2200;
+    static WATER_SOURCE_CANDIDATE_LIMIT = 12;
 
     static preload(scene) {
         scene.load.image('farmer_plant', farmerPlant);
@@ -185,24 +187,127 @@ export class Farmer {
     }
 
     static tryAssignWaterWork(troop, preferredCrop = null) {
-        if (!troop.waterBucket.count) {
-            this.assignWaterTask(troop);
-            return true;
+        if (!Number(troop.waterBucket?.count || 0)) {
+            return this.assignWaterTask(troop);
         }
         if (preferredCrop) {
-            return Manager.assignOneTroopToAction(troop, [preferredCrop], CONTROL_STATES.WATER_CROPS_MODE);
+            return this._assignWaterCropTasks(troop, [preferredCrop]);
         }
         const cropNeedingWater = Teams.getCropsNeedingWater(troop.body.team);
         if (!cropNeedingWater.length) return false;
-        return Manager.assignOneTroopToAction(troop, cropNeedingWater, CONTROL_STATES.WATER_CROPS_MODE);
+        return this._assignWaterCropTasks(troop, cropNeedingWater);
+    }
+
+    static _nowMs(troop) {
+        return Number(troop?.scene?.getSimulationNow?.() ?? troop?.scene?.simNowMs ?? troop?.scene?.time?.now ?? Date.now());
+    }
+
+    static _failureKey(kind, target) {
+        return `${kind}:${Number(target?.x)},${Number(target?.y)}`;
+    }
+
+    static _failureMap(troop) {
+        if (!troop._farmerWaterFailureUntil) troop._farmerWaterFailureUntil = new Map();
+        return troop._farmerWaterFailureUntil;
+    }
+
+    static _isFailureCoolingDown(troop, kind, target) {
+        if (!target) return false;
+        const until = Number(this._failureMap(troop).get(this._failureKey(kind, target)) || 0);
+        return until > this._nowMs(troop);
+    }
+
+    static _markFailureCooldown(troop, kind, target) {
+        if (!target) return;
+        this._failureMap(troop).set(
+            this._failureKey(kind, target),
+            this._nowMs(troop) + this.WATER_ASSIGN_FAILURE_COOLDOWN_MS
+        );
+    }
+
+    static _waterSourceCandidates(troop) {
+        const tx = Math.floor(troop.x / SQUARESIZE);
+        const ty = Math.floor(troop.y / SQUARESIZE);
+        const points = waterSourcesQuadTree?.getPoints?.();
+        const candidates = Array.isArray(points) && points.length
+            ? points
+            : [waterSourcesQuadTree?.nearest?.(tx, ty)].filter(Boolean);
+
+        const seen = new Set();
+        return candidates
+            .filter((point) => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)))
+            .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+            .filter((point) => {
+                const key = `${point.x},${point.y}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .sort((a, b) => {
+                const adx = a.x - tx;
+                const ady = a.y - ty;
+                const bdx = b.x - tx;
+                const bdy = b.y - ty;
+                return (adx * adx + ady * ady) - (bdx * bdx + bdy * bdy);
+            })
+            .slice(0, this.WATER_SOURCE_CANDIDATE_LIMIT);
+    }
+
+    static _assignWaterCropTasks(troop, taskList) {
+        const state = CONTROL_STATES.WATER_CROPS_MODE;
+        const failures = [];
+        const tasks = (Array.isArray(taskList) ? taskList : [])
+            .filter((task) => task && !task.canceled)
+            .filter((task) => !this._isFailureCoolingDown(troop, "crop", task));
+
+        for (const task of tasks) {
+            if (Manager.tooManyAssigned(task, state)) continue;
+
+            const path = Player.pathTo(troop, task.x, task.y, true);
+            if (!path?.length) {
+                failures.push(task);
+                continue;
+            }
+
+            Teams.movePlayerState(troop, state);
+            troop.roam = false;
+            task.assigned = Math.max(0, Number(task.assigned || 0)) + 1;
+            troop.task = task;
+            Manager._setTaskMeta?.(troop, task, state, "wateringList");
+
+            if (Player.moveTo(troop, path)) return true;
+            failures.push(task);
+        }
+
+        for (const task of failures) this._markFailureCooldown(troop, "crop", task);
+        return false;
     }
 
     static assignWaterTask(troop) {
-        const nearest = waterSourcesQuadTree.nearest(Math.floor(troop.x/SQUARESIZE), Math.floor(troop.y/SQUARESIZE));
-        if (!nearest) return; 
-        troop.task = { type: 'getWater', x: nearest.x, y: nearest.y };
-        Teams.movePlayerState(troop, CONTROL_STATES.GET_WATER_MODE);
-        Player.moveTo(troop, Player.pathTo(troop, nearest.x, nearest.y));
+        const candidates = this._waterSourceCandidates(troop)
+            .filter((source) => !this._isFailureCoolingDown(troop, "source", source));
+        if (!candidates.length) return false;
+
+        for (const source of candidates) {
+            const path = Player.pathTo(troop, source.x, source.y, true);
+            if (!path?.length) {
+                this._markFailureCooldown(troop, "source", source);
+                continue;
+            }
+
+            const task = { type: 'getWater', x: source.x, y: source.y };
+            troop.task = task;
+            troop.roam = false;
+            Teams.movePlayerState(troop, CONTROL_STATES.GET_WATER_MODE);
+            Manager._setTaskMeta?.(troop, task, CONTROL_STATES.GET_WATER_MODE, null);
+
+            if (Player.moveTo(troop, path)) return true;
+            this._markFailureCooldown(troop, "source", source);
+        }
+
+        if (troop.task?.type === "getWater") troop.task = null;
+        Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
+        return false;
     }
 
     static addCarryToFarmer(troop, item, count = 1) {

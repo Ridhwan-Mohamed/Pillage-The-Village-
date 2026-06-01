@@ -29,6 +29,64 @@ export class StorageManager {
         return Teams.teamLists?.[`${teamNumber}`] ?? Teams.teamLists?.[teamNumber] ?? null;
     }
 
+    static getStoredItemCountForTeam(teamNumber, itemType) {
+        const team = this._getTeam(teamNumber);
+        const itemDef = typeof itemType === "string" ? UI_ITEM_TYPES[itemType] : itemType;
+        if (!team || !itemDef) return 0;
+
+        const storages = Array.isArray(team.storageList) ? team.storageList : [];
+        return storages.reduce((sum, storage) => {
+            if (typeof storage?.getItemCount === "function") {
+                return sum + Math.max(0, Number(storage.getItemCount(itemDef) || 0));
+            }
+
+            const slots = Array.isArray(storage?.storageItems) ? storage.storageItems : [];
+            return sum + slots.reduce((slotSum, slot) => {
+                if (slot?.item?.name !== itemDef.name) return slotSum;
+                return slotSum + Math.max(0, Number(slot.amount || 0));
+            }, 0);
+        }, 0);
+    }
+
+    static _getStoredSlotsForTeam(teamNumber) {
+        const team = this._getTeam(teamNumber);
+        const storages = Array.isArray(team?.storageList) ? team.storageList : [];
+        return storages.flatMap((storage) =>
+            (Array.isArray(storage?.storageItems) ? storage.storageItems : [])
+                .filter((slot) => slot?.item && Number(slot.amount || 0) > 0)
+        );
+    }
+
+    static getFoodEquivalentValue(item) {
+        const itemDef = UI_ITEM_TYPES[item?.name] ?? item;
+        if (!itemDef) return 0;
+        if (itemDef.name === UI_ITEM_TYPES.food.name) return 1;
+        if (itemDef.food && Number(itemDef.foodValue || 0) > 0) {
+            return Math.max(1, Number(itemDef.foodValue || 1));
+        }
+        return 0;
+    }
+
+    static getStoredFoodEquivalentForTeam(teamNumber) {
+        return this._getStoredSlotsForTeam(teamNumber).reduce((sum, slot) => {
+            const value = this.getFoodEquivalentValue(slot.item);
+            if (!(value > 0)) return sum;
+            return sum + Math.max(0, Number(slot.amount || 0)) * value;
+        }, 0);
+    }
+
+    static syncStorageBackedResourceCounters(scene = this.scene, teamNumber = "1") {
+        if (!scene) return;
+
+        scene.seeds = this.getStoredItemCountForTeam(teamNumber, UI_ITEM_TYPES.seedCrop);
+        scene.berries = this.getStoredItemCountForTeam(teamNumber, UI_ITEM_TYPES.seedBerry);
+        scene.woodAmnt = this.getStoredItemCountForTeam(teamNumber, UI_ITEM_TYPES.wood);
+        scene.stoneAmnt = this.getStoredItemCountForTeam(teamNumber, UI_ITEM_TYPES.stone);
+        scene.foodAmnt = this.getStoredFoodEquivalentForTeam(teamNumber);
+        scene.cleanWaterAmnt = this.getStoredItemCountForTeam(teamNumber, UI_ITEM_TYPES.clean_water);
+        scene.uiScene?._refreshTopHudValues?.(true);
+    }
+
     static getStorageSellPrice(itemOrName) {
         return getBalancedStorageSellPrice(itemOrName);
     }

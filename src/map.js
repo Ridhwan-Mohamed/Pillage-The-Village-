@@ -58,6 +58,7 @@ export class Map{
     static waterBlocks = [];
     static outerWaterLayer;
     static outerWaterTileSprite;
+    static outerWaterAmbienceOverlay;
     static renderCache = [];
     static cameraBounds;
     static worldPines = [];
@@ -98,6 +99,7 @@ export class Map{
         this.blocks = [];
         this.waterBlocks = [];
         this.outerWaterTileSprite = null;
+        this.outerWaterAmbienceOverlay = null;
         this.barrier = this.scene.physics.add.staticGroup();  // Ensure barriers are static bodies
         this.graphics = this.scene.add.graphics();
         Map.outerWaterLayer = Map.scene.add.layer();
@@ -132,6 +134,7 @@ export class Map{
         try { this.outerWaterLayer?.destroy?.(true); } catch {}
         this.outerWaterLayer = null;
         this.outerWaterTileSprite = null;
+        this.outerWaterAmbienceOverlay = null;
 
         try { this.worldStaticLayer?.removeAll?.(true); } catch {}
         try { this.worldStaticLayer?.destroy?.(true); } catch {}
@@ -248,10 +251,18 @@ export class Map{
                     lenX,
                     lenY,
                     this.placingItem,
-                    item?.block ? { padding: 1, protectFarmSpots: true, paddingAllowWalls: true, paddingProtectFarmSpots: false } : {}
+                    item?.block ? {
+                        padding: 1,
+                        protectFarmSpots: true,
+                        paddingAllowWalls: true,
+                        paddingProtectFarmSpots: false,
+                        allowAutoClearSite: true,
+                    } : {}
                 );
                 this.placingItem.setTint(tintColor);
                 this.placingItem.setPosition(x, y);
+            } else if (this.placingItem) {
+                this._clearPlacementAutoClearPreview(this.placingItem);
             }
         });
     }
@@ -493,21 +504,197 @@ export class Map{
         return false;
     }
 
+    static _cellHasActualCrop(x, y, teamNumber = 1) {
+        const key = `${x},${y}`;
+        if (this._cellHasPlacedCrop(x, y)) return true;
+        if (this.cropDict?.[key]?.active !== false && this.cropDict?.[key]) return true;
+
+        const hasCropInTeam = (team) =>
+            Array.isArray(team?.crops) &&
+            team.crops.some((crop) => Number(crop?.x) === x && Number(crop?.y) === y);
+
+        const team =
+            Teams.teamLists?.[`${teamNumber}`] ??
+            Teams.teamLists?.[teamNumber];
+        if (hasCropInTeam(team)) return true;
+
+        return Object.values(Teams.teamLists || {}).some(hasCropInTeam);
+    }
+
+    static _cellHasRealBuildingFootprint(x, y) {
+        for (const team of Object.values(Teams.teamLists || {})) {
+            const buildings = Array.isArray(team?.buildings) ? team.buildings : [];
+            for (const entry of buildings) {
+                const ref =
+                    entry?.[3]?.buildingRef ??
+                    entry?.[3] ??
+                    entry?.buildingRef ??
+                    entry?.value ??
+                    null;
+
+                if (ref?._destroyed || ref?._isDestroyed || ref?.active === false || ref?.sprite?.active === false) {
+                    continue;
+                }
+
+                const type =
+                    entry?.[2] ??
+                    entry?.type ??
+                    entry?.tileType ??
+                    ref?.tileType ??
+                    ref?.buildType ??
+                    ref?.type ??
+                    null;
+
+                const startX = Number(entry?.[0] ?? entry?.x ?? ref?.gridX ?? ref?.x);
+                const startY = Number(entry?.[1] ?? entry?.y ?? ref?.gridY ?? ref?.y);
+                if (!Number.isFinite(startX) || !Number.isFinite(startY)) continue;
+
+                const lenX = Math.max(1, Number(type?.lenX ?? ref?.lenX ?? 1) || 1);
+                const lenY = Math.max(1, Number(type?.lenY ?? ref?.lenY ?? 1) || 1);
+                if (
+                    x >= startX &&
+                    x < startX + lenX &&
+                    y >= startY &&
+                    y < startY + lenY
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    static _cellHasAutoClearableSiteObstacle(x, y, options = {}) {
+        if (this._wallStructureInfoAt?.(x, y)) return true;
+        return !!options?.protectFarmSpots && this._cellHasActualCrop(x, y, options?.teamNumber ?? 1);
+    }
+
+    static _clearPlacementAutoClearPreview(previewItem = null) {
+        const markers = previewItem?._autoClearPreviewMarkers ?? this._autoClearPreviewMarkers ?? [];
+        for (const marker of markers) {
+            marker?.tween?.remove?.();
+            marker?.overlay?.destroy?.();
+            marker?.xText?.destroy?.();
+            marker?.label?.destroy?.();
+        }
+        if (previewItem) {
+            previewItem._autoClearPreviewMarkers = [];
+            previewItem._autoClearPreviewKey = "";
+        } else {
+            this._autoClearPreviewMarkers = [];
+            this._autoClearPreviewKey = "";
+        }
+    }
+
+    static _placementAutoClearTargets(posX, posY, lenX, lenY, options = {}, blocked = false) {
+        if (blocked || !options?.allowAutoClearSite) return [];
+        if (!this.isWithinMainIslandBuildInterior(posX, posY, lenX, lenY)) return [];
+
+        const targets = [];
+        const seen = new Set();
+
+        for (let y = posY; y < posY + lenY; y++) {
+            for (let x = posX; x < posX + lenX; x++) {
+                const row = this.grid?.[y];
+                if (!row || row[x] == null) return [];
+                if (this._cellHasRealBuildingFootprint(x, y)) return [];
+
+                const wallInfo = this._wallStructureInfoAt?.(x, y);
+                const hasCrop = !!options?.protectFarmSpots && this._cellHasActualCrop(x, y, options?.teamNumber ?? 1);
+
+                if (this._cellIsBlocking(x, y) && !wallInfo) return [];
+                if (this._cellHasProtectedFarmSpot(x, y, options?.teamNumber ?? 1) && !hasCrop) return [];
+
+                const kind = wallInfo ? "wall" : hasCrop ? "crop" : null;
+                if (!kind) continue;
+
+                const key = `${kind}:${x},${y}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                targets.push({ x, y, kind });
+            }
+        }
+
+        return targets;
+    }
+
+    static _updatePlacementAutoClearPreview(posX, posY, lenX, lenY, previewItem = null, options = {}, blocked = false) {
+        if (!previewItem || !this.scene?.add) return;
+
+        const targets = this._placementAutoClearTargets(posX, posY, lenX, lenY, options, blocked);
+        const nextKey = targets.map((target) => `${target.kind}:${target.x},${target.y}`).join("|");
+        if (previewItem._autoClearPreviewKey === nextKey) return;
+
+        this._clearPlacementAutoClearPreview(previewItem);
+        previewItem._autoClearPreviewKey = nextKey;
+        if (!targets.length) return;
+
+        if (!previewItem._autoClearPreviewDestroyBound) {
+            previewItem._autoClearPreviewDestroyBound = true;
+            previewItem.once?.("destroy", () => this._clearPlacementAutoClearPreview(previewItem));
+        }
+
+        previewItem._autoClearPreviewMarkers = targets.map((target) => {
+            const cx = target.x * SQUARESIZE + SQUARESIZE / 2;
+            const cy = target.y * SQUARESIZE + SQUARESIZE / 2;
+            const overlay = this.scene.add.rectangle(cx, cy, SQUARESIZE * 0.92, SQUARESIZE * 0.92, 0xff2a2a, 0.22)
+                .setStrokeStyle(2, 0xff3434, 0.95)
+                .setDepth(UIDEPTH + 8)
+                .setScrollFactor(1);
+            const xText = this.scene.add.text(cx, cy - 1, "X", {
+                fontSize: "20px",
+                fill: "#ff1f1f",
+                stroke: "#2b0000",
+                strokeThickness: 5,
+                fontFamily: "Bungee",
+            })
+                .setOrigin(0.5, 0.5)
+                .setDepth(UIDEPTH + 9)
+                .setScrollFactor(1);
+            const label = this.scene.add.text(cx, cy + SQUARESIZE * 0.28, "CLEAR", {
+                fontSize: "8px",
+                fill: "#ffe1e1",
+                stroke: "#2b0000",
+                strokeThickness: 3,
+                fontFamily: "Bungee",
+            })
+                .setOrigin(0.5, 0.5)
+                .setDepth(UIDEPTH + 9)
+                .setScrollFactor(1);
+
+            const tween = this.scene.tweens?.add?.({
+                targets: [overlay, xText, label],
+                alpha: 0.35,
+                duration: 360,
+                yoyo: true,
+                repeat: -1,
+                ease: "Sine.easeInOut",
+            }) ?? null;
+
+            return { overlay, xText, label, tween };
+        });
+    }
+
     static _cellHasPlacementConflict(x, y, options = {}) {
         const {
             protectFarmSpots = false,
             treatOutOfBoundsAsBlocked = true,
             allowWallAdjacency = false,
+            allowAutoClearSite = false,
         } = options;
 
         const row = this.grid?.[y];
         if (!row || row[x] == null) return treatOutOfBoundsAsBlocked;
+
+        if (this._cellHasRealBuildingFootprint(x, y)) return true;
 
         if (allowWallAdjacency && this._wallStructureInfoAt?.(x, y)) {
             return false;
         }
 
         if (buildingManager._queuedBlockBuildCovers?.(x, y)) return true;
+        if (allowAutoClearSite && this._cellHasAutoClearableSiteObstacle(x, y, options)) return false;
         if (this._cellIsBlocking(x, y)) return true;
         if (protectFarmSpots && this._cellHasProtectedFarmSpot(x, y)) return true;
 
@@ -571,6 +758,7 @@ export class Map{
             !this.isWithinMainIslandBuildInterior(posX, posY, lenX, lenY) ||
             this._placementIsBlocked(posX, posY, lenX, lenY, options);
         if (previewItem) previewItem.blocked = blocked;
+        this._updatePlacementAutoClearPreview(posX, posY, lenX, lenY, previewItem, options, blocked);
         if (blocked) {
             return Phaser.Display.Color.GetColor(200, 49, 19); // red
         }
@@ -954,6 +1142,7 @@ export class Map{
         addStarterItems("wood", starterResources.wood);
         addStarterItems("stone", starterResources.stone);
         addStarterItems("clean_water", starterResources.water ?? starterResources.clean_water);
+        StorageManager.syncStorageBackedResourceCounters(scene, "1");
     }
 
     static deleteAllGridElements(){
@@ -984,7 +1173,9 @@ export class Map{
         this.blocks[idx][layerIndex] = sprites;
     }
 
-    static reDraw(width = WORLD_DIMENSIONX, height = WORLD_DIMENSIONY) {
+    static reDraw(width = null, height = null) {
+        width = Math.max(1, Math.floor(Number(width ?? this.grid?.[0]?.length ?? WORLD_DIMENSIONX)));
+        height = Math.max(1, Math.floor(Number(height ?? this.grid?.length ?? WORLD_DIMENSIONY)));
         this.graphics.clear();
         this.blocks.forEach(Map._destroyNode);
         this.blocks = [];
@@ -1037,12 +1228,30 @@ export class Map{
     }   
 
     static _clearOuterWaterBackdrop() {
+        this.outerWaterAmbienceOverlay?.destroy?.();
+        this.outerWaterAmbienceOverlay = null;
         this.outerWaterTileSprite?.destroy?.();
         this.outerWaterTileSprite = null;
         this.outerWaterLayer?.removeAll?.(true);
     }
 
-    static _drawOuterWaterBackdrop(width = WORLD_DIMENSIONX, height = WORLD_DIMENSIONY) {
+    static setOuterWaterAmbience(ambientBrightness = 1, tintColor = 0x020716) {
+        const overlay = this.outerWaterAmbienceOverlay;
+        if (!overlay) return;
+
+        const brightness = Phaser.Math.Clamp(Number(ambientBrightness), 0, 1);
+        const alpha = 1 - brightness;
+        const color = Number.isFinite(Number(tintColor)) ? Number(tintColor) : 0x020716;
+
+        overlay
+            .setFillStyle(color, 1)
+            .setAlpha(alpha)
+            .setVisible(alpha > 0.001);
+    }
+
+    static _drawOuterWaterBackdrop(width = null, height = null) {
+        width = Math.max(1, Math.floor(Number(width ?? this.grid?.[0]?.length ?? WORLD_DIMENSIONX)));
+        height = Math.max(1, Math.floor(Number(height ?? this.grid?.length ?? WORLD_DIMENSIONY)));
         if (!this.scene?.textures?.exists?.("water")) return;
         if (!this.outerWaterLayer) {
             this.outerWaterLayer = this.scene.add.layer();
@@ -1072,6 +1281,21 @@ export class Map{
             .setAlpha(1);
         this.outerWaterTileSprite.setFrame?.(1);
         this.outerWaterLayer.add(this.outerWaterTileSprite);
+
+        this.outerWaterAmbienceOverlay = this.scene.add.rectangle(
+            x + totalWidth / 2,
+            y + totalHeight / 2,
+            totalWidth,
+            totalHeight,
+            VisibilitySystem.ambientTintColor ?? 0x020716,
+            1
+        )
+            .setDepth(FLOORDEPTH - 1.9)
+            .setOrigin(0.5)
+            .setAlpha(0)
+            .setVisible(false);
+        this.outerWaterLayer.add(this.outerWaterAmbienceOverlay);
+        this.setOuterWaterAmbience(VisibilitySystem.ambient, VisibilitySystem.ambientTintColor);
     }
 
     static redrawRect(x, y, w, h, pad = 1) {
@@ -1100,6 +1324,152 @@ export class Map{
         if(!this.cropDict[key]){
             this.drawGridValue(x, y);
         }
+    }
+
+    static _destroyCropWaterIndicator(crop) {
+        crop?.waterNeedTween?.remove?.();
+        if (crop) crop.waterNeedTween = null;
+        if (crop?.waterNeedIcon) {
+            this.removeFromWorldStatic?.(crop.waterNeedIcon);
+            crop.waterNeedIcon = null;
+        }
+    }
+
+    static _fallbackFloorForClearedCrop(x, y) {
+        const floorFromVal = (val) => {
+            const name = TILE_MAP(val);
+            if (!name || name === "crops") return null;
+            const def = TILE_TYPES[name];
+            if (!def || def.depth !== FLOORDEPTH) return null;
+            return def.interior ?? def.grid ?? null;
+        };
+
+        const cell = this.grid?.[y]?.[x];
+        if (Array.isArray(cell)) {
+            for (const val of cell) {
+                const floor = floorFromVal(val);
+                if (floor != null) return floor;
+            }
+        } else {
+            const floor = floorFromVal(cell);
+            if (floor != null) return floor;
+        }
+
+        const samples = [
+            [0, -1], [1, 0], [0, 1], [-1, 0],
+            [-1, -1], [1, -1], [1, 1], [-1, 1],
+        ];
+        for (const [dx, dy] of samples) {
+            const nearby = this.grid?.[y + dy]?.[x + dx];
+            const values = Array.isArray(nearby) ? nearby : [nearby];
+            for (const val of values) {
+                const floor = floorFromVal(val);
+                if (floor != null) return floor;
+            }
+        }
+
+        return TILE_TYPES.dirt?.interior ?? TILE_TYPES.dirt?.grid ?? TILE_TYPES.grass?.grid ?? 1;
+    }
+
+    static clearCropAt(x, y, teamNumber = 1, opts = {}) {
+        x = Number(x);
+        y = Number(y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+        const key = `${x},${y}`;
+        let cleared = false;
+        const cropSprite = this.cropDict?.[key] ?? null;
+        if (cropSprite) {
+            this.removeFromWorldStatic?.(cropSprite);
+            delete this.cropDict[key];
+            cleared = true;
+        }
+
+        const teams = teamNumber == null
+            ? Object.values(Teams.teamLists || {})
+            : [Teams.teamLists?.[`${teamNumber}`] ?? Teams.teamLists?.[teamNumber]];
+
+        const pruneTaskList = (list) => {
+            if (!Array.isArray(list)) return;
+            for (let i = list.length - 1; i >= 0; i -= 1) {
+                const task = list[i];
+                if (Number(task?.x) !== x || Number(task?.y) !== y) continue;
+                list.splice(i, 1);
+                cleared = true;
+            }
+        };
+
+        for (const team of teams) {
+            if (!team) continue;
+            if (Array.isArray(team.crops)) {
+                for (let i = team.crops.length - 1; i >= 0; i -= 1) {
+                    const crop = team.crops[i];
+                    if (Number(crop?.x) !== x || Number(crop?.y) !== y) continue;
+                    this._destroyCropWaterIndicator(crop);
+                    if (crop?.sprite && crop.sprite !== cropSprite) {
+                        this.removeFromWorldStatic?.(crop.sprite);
+                    }
+                    team.crops.splice(i, 1);
+                    cleared = true;
+                }
+            }
+
+            pruneTaskList(team.wateringList);
+            pruneTaskList(team.cropList);
+            pruneTaskList(team.TeamFarmSpots);
+            pruneTaskList(team.tileList);
+        }
+
+        const cropWorkStates = new Set([
+            CONTROL_STATES.FARM_MODE,
+            CONTROL_STATES.R_FARM_MODE,
+            CONTROL_STATES.WATER_CROPS_MODE,
+        ]);
+        for (const troop of Player.troops || []) {
+            const task = troop?.task;
+            if (!task || Number(task.x) !== x || Number(task.y) !== y) continue;
+            const state = troop.taskMeta?.state ?? troop.state;
+            if (!cropWorkStates.has(state)) continue;
+            if (typeof task.assigned === "number" && task.assigned > 0) task.assigned -= 1;
+            troop.timer?.remove?.(false);
+            troop.timer = null;
+            troop.task = null;
+            troop.taskMeta = null;
+            troop.destX = null;
+            troop.destY = null;
+            troop.currentPath?.splice?.(0);
+            troop.body?.setVelocity?.(0, 0);
+            troop.play?.(troop.idle);
+            Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
+        }
+
+        const cell = this.grid?.[y]?.[x];
+        const isCropVal = (val) => TILE_MAP(val) === "crops";
+        if (Array.isArray(cell) && cell.some(isCropVal)) {
+            const remaining = cell.filter((val) => !isCropVal(val));
+            if (remaining.length >= 2) this.grid[y][x] = remaining.slice(0, 2);
+            else if (remaining.length === 1) this.grid[y][x] = remaining[0];
+            else this.grid[y][x] = this._fallbackFloorForClearedCrop(x, y);
+            this._refreshRenderCacheAround(x, y);
+            cleared = true;
+        } else if (isCropVal(cell)) {
+            this.grid[y][x] = this._fallbackFloorForClearedCrop(x, y);
+            this._refreshRenderCacheAround(x, y);
+            cleared = true;
+        }
+
+        if (!cleared) return false;
+
+        if (opts.redraw !== false) {
+            if (this.redrawRect) this.redrawRect(x, y, 1, 1, 1);
+            else this.drawGridValue(x, y);
+        }
+        this.scene?.zoomMixer?.updateOverviewCell?.(x, y, this.grid);
+        this.regionSystem?.markDirty?.();
+        this.regionDrawer?.markDirty?.();
+        this.enemyRegionSystem?.markDirty?.();
+        this.enemyRegionDrawer?.markDirty?.();
+        return true;
     }
 
     static _drawGridCell(x, y, opts = {}) {
@@ -2465,9 +2835,9 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
 
         const collider = this.scene.physics.add.staticImage(centerX, centerY, "barrier");
         collider.setAlpha?.(0);
-        collider.setSize?.(width, height);
-        collider.body?.setSize?.(width, height, true);
+        collider.setDisplaySize?.(width, height);
         collider.refreshBody?.();
+        collider.body?.setSize?.(width, height, true);
         collider.team = meta.team ?? collider.team ?? null;
         collider.blocksLineOfFire = meta.blocksLineOfFire !== false;
         collider.blocksProjectiles = meta.blocksProjectiles !== false;

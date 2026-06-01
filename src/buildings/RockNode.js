@@ -5,7 +5,7 @@ import { blockResourceManager } from "../Manager/BlockResourceManager";
 import { buildingManager } from "../Manager/buildingManager";
 import { VisibilitySystem } from "../UI/VisibilitySystem";
 import { OrderRunner } from "../orders/OrderRunner";
-import { getGoldOrePayout, roundPrice } from "../balance/GameBalance";
+import { getGoldOrePayout, getGoldOreStagePayout } from "../balance/GameBalance";
 
 export class RockNode {
   static scene;
@@ -29,7 +29,7 @@ export class RockNode {
     this._lastClickTime = 0;
     this.flashTween = null;
     this.active = true;
-    this.moneyReward = Math.max(0, Number(opts.moneyReward ?? (this.resourceKind === "gold" ? getGoldOrePayout(scene) : 0)) || 0);
+    this.moneyReward = Math.max(0, Number(opts.moneyReward ?? (this.resourceKind === "gold" ? getGoldOrePayout(scene, 1, this.maxHealth) : 0)) || 0);
     this.moneyRewardRemaining = Math.max(0, Number(opts.moneyRewardRemaining ?? this.moneyReward) || 0);
 
     const cx = (gridX + this.footprintW / 2) * SQUARESIZE;
@@ -158,17 +158,11 @@ export class RockNode {
     const remainingReward = Math.max(0, Number(this.moneyRewardRemaining || 0));
     if (!(remainingReward > 0)) return true;
 
-    const maxHealth = Math.max(1, Number(this.maxHealth || 1));
     const next = Math.max(0, Number(nextHealth || 0));
-    const currentHitIndex = Math.max(1, (maxHealth - next));
-    const remainingWeightTotal = Array.from(
-      { length: Math.max(1, (maxHealth - currentHitIndex + 1)) },
-      (_, idx) => currentHitIndex + idx
-    ).reduce((sum, weight) => sum + weight, 0);
-    const stagedAmount = currentHitIndex < maxHealth
-      ? roundPrice((remainingReward * currentHitIndex) / Math.max(1, remainingWeightTotal), 5)
-      : remainingReward;
-    const amount = Math.max(0, Math.min(remainingReward, stagedAmount));
+    const stagePayout = getGoldOreStagePayout(scene);
+    const amount = next <= 0
+      ? remainingReward
+      : Math.max(0, Math.min(remainingReward, stagePayout));
     if (!(amount > 0)) return true;
 
     const sourceX = Number(this.sprite?.x ?? ((this.gridX + this.footprintW / 2) * SQUARESIZE));

@@ -5,6 +5,7 @@ import { blockResourceManager } from "../Manager/BlockResourceManager";
 import { buildingManager } from "../Manager/buildingManager";
 import { OrderRunner } from "../orders/OrderRunner";
 import { UI_ITEM_TYPES } from "../UI/UIConstants";
+import { VisibilitySystem } from "../UI/VisibilitySystem";
 
 export const FARM_BUSH_TYPES = Object.freeze({
   seed: {
@@ -76,6 +77,12 @@ export class FarmBushNode {
     this.sprite.ownerNode = this;
     GameMap.addToWorldStatic(this.sprite);
     GameMap[type.worldListKey]?.push?.(this);
+    this.lightId = VisibilitySystem.addLightSource({
+      x: gridX + 0.5,
+      y: gridY + 0.5,
+      r: 2.8,
+      brightness: 0.85,
+    });
 
     this.setUpHitDetection();
   }
@@ -163,6 +170,10 @@ export class FarmBushNode {
     this.active = false;
     FarmBushNode.scene.setForagerRouteHover?.(this, this.resourceKind, false);
     this.stopFlash();
+    if (this.lightId != null) {
+      VisibilitySystem.removeLightById(this.lightId);
+      this.lightId = null;
+    }
     if (this.task?.value === this) this.task.value = null;
     this.task = null;
     removeFromArray(GameMap[this.resourceTileType.worldListKey], this);

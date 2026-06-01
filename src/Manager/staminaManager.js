@@ -73,7 +73,7 @@ export class StaminaManager {
         }
 
         if (!wasSleeping) {
-            AudioManager.playSound("sfx_door_close", { volume: 0.24 });
+            AudioManager.playWorldSound("sfx_door_close", { volume: 0.24 });
         }
     }
 
@@ -91,7 +91,7 @@ export class StaminaManager {
         }
 
         if (wasSleeping) {
-            AudioManager.playSound("sfx_door_open", { volume: 0.24 });
+            AudioManager.playWorldSound("sfx_door_open", { volume: 0.24 });
         }
     }
 

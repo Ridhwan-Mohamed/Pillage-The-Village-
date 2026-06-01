@@ -143,9 +143,13 @@ export class buildingManager{
             sprite.play?.(sprite.idle);
             Teams.movePlayerState(sprite, CONTROL_STATES.TRACK_MODE);
         }
+        if (teamNumber != null && task?.destroyJobId) {
+            this._activateLinkedBuildsIfDestroyJobComplete(task.destroyJobId, teamNumber);
+        }
     }
     static _wallJobSeed = 1;
     static _destroyJobSeed = 1;
+    static _buildTaskSeed = 1;
 
     static createBuildTileStateArray(tiles, teamNumber, buildTypeName = null) {
         const team = Teams.teamLists[teamNumber];
@@ -184,6 +188,11 @@ export class buildingManager{
     static createDestroyJobId(teamNumber = 1) {
         const seed = this._destroyJobSeed++;
         return `destroy-job-${Number(teamNumber) || 1}-${Date.now()}-${seed}`;
+    }
+
+    static createBuildTaskId(teamNumber = 1) {
+        const seed = this._buildTaskSeed++;
+        return `build-task-${Number(teamNumber) || 1}-${Date.now()}-${seed}`;
     }
 
     static getSelectedBuilders(teamNumber = 1) {
@@ -315,6 +324,7 @@ export class buildingManager{
 
     static assignSelectedBuildersToTask(task, state, selectedBuilders = this.getSelectedBuilders()) {
         if (!task || !selectedBuilders.length) return false;
+        if (state === CONTROL_STATES.BUILD_MODE_B && this._isBlockBuildAwaitingSiteClear(task)) return false;
         const keepIds = new Set(selectedBuilders.map(troop => troop.id));
         this._releaseBuildersOnTask(task, keepIds);
 
@@ -588,6 +598,7 @@ export class buildingManager{
     }
 
     static isQueuedBuildTaskDeferred(task, troop = null) {
+        if (this._isBlockBuildAwaitingSiteClear(task)) return true;
         const until = Number(task?._deferredUntil || 0);
         if (!(until > 0)) return false;
         const now = Number(troop?.scene?.time?.now ?? this._now());
@@ -1343,8 +1354,49 @@ export class buildingManager{
 
     static _clearQueuedDestroyTaskVisual(task) {
         if (!task) return;
+        task.destroyWarningXTween?.remove?.();
+        task.destroyWarningXTween = null;
+        task.destroyWarningX?.destroy?.();
+        task.destroyWarningX = null;
         task.destroyMarker?.destroy?.();
         task.destroyMarker = null;
+    }
+
+    static _ensureQueuedDestroyWarningX(task, x, y, size, depth) {
+        if (!task || !this.scene?.add) return null;
+
+        let warningX = task.destroyWarningX;
+        if (!warningX || !warningX.active) {
+            warningX = this.scene.add.text(x, y, "X", {
+                fontSize: `${Math.max(14, Math.min(22, Math.round(size * 0.42)))}px`,
+                fill: "#ff2222",
+                stroke: "#3a0000",
+                strokeThickness: 4,
+                fontFamily: "Bungee",
+            })
+                .setOrigin(0.5, 0.5)
+                .setDepth(depth)
+                .setAlpha(0.95)
+                .setScrollFactor(1);
+
+            task.destroyWarningX = warningX;
+            task.destroyWarningXTween?.remove?.();
+            task.destroyWarningXTween = this.scene.tweens?.add?.({
+                targets: warningX,
+                alpha: 0.28,
+                duration: 420,
+                yoyo: true,
+                repeat: -1,
+                ease: "Sine.easeInOut",
+            }) ?? null;
+        } else {
+            warningX.setPosition(x, y);
+            warningX.setFontSize?.(Math.max(14, Math.min(22, Math.round(size * 0.42))));
+        }
+
+        warningX.setDepth(depth);
+        warningX.setVisible(true);
+        return warningX;
     }
 
     static _bindQueuedDestroyGhostInteractions(task, marker, teamNumber = 1) {
@@ -1411,6 +1463,13 @@ export class buildingManager{
         marker.setAlpha(isSelected ? 0.42 : isHovered ? 0.34 : 0.18);
         marker.setDepth(UIDEPTH + (isSelected ? 3 : isHovered ? 2 : 1));
         marker.setVisible(true);
+        this._ensureQueuedDestroyWarningX(
+            task,
+            x,
+            y,
+            Math.min(width, height),
+            UIDEPTH + (isSelected ? 6 : isHovered ? 5 : 4)
+        );
         return marker;
     }
 
@@ -1517,7 +1576,8 @@ export class buildingManager{
                 helperText: () => {
                     const pct = this._currentConstructionPercent(task);
                     const refundText = this._formatCommandRefund(this._sumTaskRefunds([task]));
-                    return `${this._getTaskDisplayName(task)} ${pct}% | Refund ${refundText}`;
+                    const progress = this._isBlockBuildAwaitingSiteClear(task) ? "clearing site" : `${pct}%`;
+                    return `${this._getTaskDisplayName(task)} ${progress} | Refund ${refundText}`;
                 },
                 buttons: () => [
                     {
@@ -1934,7 +1994,7 @@ export class buildingManager{
         Scheduler.stepUnit(troop);
     }
 
-    static cancelQueuedDestroyJob(destroyJobId, teamNumber = 1) {
+    static cancelQueuedDestroyJob(destroyJobId, teamNumber = 1, options = {}) {
         teamNumber = Number(teamNumber || 1);
         if (!destroyJobId) return false;
         const tasks = this._queuedDestroyJobTasks(destroyJobId, teamNumber);
@@ -1956,6 +2016,9 @@ export class buildingManager{
         }
         if (this._hoveredDestroyJobId === destroyJobId && this._hoveredDestroyJobTeamNumber === teamNumber) {
             this._hoveredDestroyJobId = null;
+        }
+        if (options?.cancelLinkedBuilds !== false) {
+            this._cancelLinkedBuildsForDestroyJob(destroyJobId, teamNumber);
         }
         this.refreshQueuedDestroyJobVisuals(teamNumber);
         this._syncBuildQueueCommandBar();
@@ -2018,7 +2081,91 @@ export class buildingManager{
         task.refundCost = task.refundCost ?? type.cost ?? type.price ?? null;
         task.duration = Math.max(1, Number(task.duration || 100));
         task.totalDuration = Math.max(task.duration, Number(task.totalDuration || task.duration || 100));
+        task.buildTaskId = task.buildTaskId ?? task.siteClearBuildId ?? this.createBuildTaskId(task.teamNumber);
+        task.siteClearBuildId = task.buildTaskId;
         return task;
+    }
+
+    static _isBlockBuildAwaitingSiteClear(task) {
+        return !!(task?.awaitingSiteClear && task?.pendingDestroyJobId);
+    }
+
+    static _destroyTileTaskAt(x, y, teamNumber = 1) {
+        const team = this._teamForDestroyQueue(teamNumber);
+        const queue = Array.isArray(team?.destroyTileStates) ? team.destroyTileStates : [];
+        return queue.find((task) => Number(task?.x) === x && Number(task?.y) === y) || null;
+    }
+
+    static _blockBuildSiteFailure(reason, detail = null) {
+        this._lastBlockBuildQueueFailure = { reason, detail };
+        return { ok: false, reason, detail };
+    }
+
+    static _analyzeBlockBuildSite(task, teamNumber = 1) {
+        if (!task?.type) return this._blockBuildSiteFailure("invalid");
+        if (!Map.isWithinMainIslandBuildInterior?.(task.x, task.y, task.type.lenX, task.type.lenY)) {
+            return this._blockBuildSiteFailure("outside");
+        }
+
+        const walls = [];
+        const crops = [];
+        const seenWalls = new Set();
+        const seenCrops = new Set();
+
+        for (const tile of this._blockBuildTiles(task)) {
+            const row = Map.grid?.[tile.y];
+            if (!row || row[tile.x] == null) {
+                return this._blockBuildSiteFailure("blocked", tile);
+            }
+
+            if (Map._cellHasRealBuildingFootprint?.(tile.x, tile.y)) {
+                return this._blockBuildSiteFailure("building", tile);
+            }
+
+            if (this._queuedBlockBuildCovers(tile.x, tile.y, teamNumber)) {
+                return this._blockBuildSiteFailure("reserved", tile);
+            }
+
+            const wallInfo = Map._wallStructureInfoAt?.(tile.x, tile.y);
+            const cropPresent = Map._cellHasActualCrop?.(tile.x, tile.y, teamNumber);
+
+            if (wallInfo) {
+                if (this._destroyTileTaskAt(tile.x, tile.y, teamNumber)) {
+                    return this._blockBuildSiteFailure("destroy_queued", tile);
+                }
+
+                const key = `${tile.x},${tile.y}`;
+                if (!seenWalls.has(key)) {
+                    Wall.ensureAt?.(this.scene, tile.x, tile.y, teamNumber);
+                    walls.push({
+                        x: tile.x,
+                        y: tile.y,
+                        type: TILE_TYPES[wallInfo.name] ?? TILE_TYPES.wall,
+                        originalGridVal: wallInfo.value,
+                    });
+                    seenWalls.add(key);
+                }
+            }
+
+            if (cropPresent) {
+                const key = `${tile.x},${tile.y}`;
+                if (!seenCrops.has(key)) {
+                    crops.push({ x: tile.x, y: tile.y });
+                    seenCrops.add(key);
+                }
+            }
+
+            if (Map._cellIsBlocking?.(tile.x, tile.y) && !wallInfo) {
+                return this._blockBuildSiteFailure("blocked", tile);
+            }
+
+            if (Map._cellHasProtectedFarmSpot?.(tile.x, tile.y, teamNumber) && !cropPresent) {
+                return this._blockBuildSiteFailure("farm_reserved", tile);
+            }
+        }
+
+        this._lastBlockBuildQueueFailure = null;
+        return { ok: true, walls, crops };
     }
 
     static _blockBuildTiles(task) {
@@ -2035,6 +2182,87 @@ export class buildingManager{
         }
 
         return tiles;
+    }
+
+    static _clearActivePlacementGhost() {
+        if (!Map.isPlacing) return;
+        Map.isPlacing = false;
+        Map.placingItem?.destroy?.();
+        Map.placingItem = null;
+    }
+
+    static _clearBlockBuildSiteCrops(task, teamNumber = 1) {
+        if (!task || task.siteClearCropsCleared) return false;
+
+        const tiles = Array.isArray(task.siteClearCropTiles) && task.siteClearCropTiles.length
+            ? task.siteClearCropTiles
+            : this._blockBuildTiles(task).filter((tile) => Map._cellHasActualCrop?.(tile.x, tile.y, teamNumber));
+
+        let cleared = false;
+        for (const tile of tiles) {
+            if (Map.clearCropAt?.(tile.x, tile.y, null)) cleared = true;
+        }
+
+        task.siteClearCropTiles = [];
+        task.siteClearCropsCleared = true;
+        return cleared;
+    }
+
+    static _createSiteClearDestroyJobForBuild(task, wallTiles, teamNumber = 1) {
+        if (!task?.pendingDestroyJobId || !Array.isArray(wallTiles) || !wallTiles.length) return false;
+
+        const destroyTasks = wallTiles.map((tile, index) => ({
+            x: tile.x,
+            y: tile.y,
+            type: tile.type,
+            originalGridVal: tile.originalGridVal,
+            destroyJobId: task.pendingDestroyJobId,
+            destroyJobOrder: index,
+            linkedBuildTaskId: task.buildTaskId,
+            siteClearForBuild: true,
+        }));
+
+        this.createDestroyTileStateArray(destroyTasks, teamNumber, { destroyJobId: task.pendingDestroyJobId });
+        return true;
+    }
+
+    static _linkedBlockBuildTasksForDestroyJob(destroyJobId, teamNumber = 1) {
+        if (!destroyJobId) return [];
+        const team = Teams.teamLists?.[teamNumber] ?? Teams.teamLists?.[`${teamNumber}`];
+        const queue = Array.isArray(team?.blockBuildingStates) ? team.blockBuildingStates : [];
+        return queue.filter((task) => task?.pendingDestroyJobId === destroyJobId);
+    }
+
+    static _activateLinkedBuildsIfDestroyJobComplete(destroyJobId, teamNumber = 1) {
+        if (!destroyJobId) return false;
+        if (this._queuedDestroyJobTasks(destroyJobId, teamNumber).length > 0) return false;
+
+        const linkedBuilds = this._linkedBlockBuildTasksForDestroyJob(destroyJobId, teamNumber);
+        if (!linkedBuilds.length) return false;
+
+        for (const task of linkedBuilds) {
+            task.awaitingSiteClear = false;
+            task.pendingDestroyJobId = null;
+            task.siteClearCompleted = true;
+            task.assigned = 0;
+            this.ensureQueuedBlockBuildGhost(task, teamNumber);
+            this.updateConstructionHoverText(task);
+        }
+
+        this.assignTroopToBuildBlock(teamNumber);
+        this._syncBuildQueueCommandBar();
+        return true;
+    }
+
+    static _cancelLinkedBuildsForDestroyJob(destroyJobId, teamNumber = 1) {
+        const linkedBuilds = this._linkedBlockBuildTasksForDestroyJob(destroyJobId, teamNumber);
+        let canceled = false;
+        for (const task of [...linkedBuilds]) {
+            if (this.cancelQueuedBlockBuild(task, teamNumber, { cancelLinkedDestroyJob: false })) {
+                canceled = true;
+            }
+        }
+        return canceled;
     }
 
     static _markQueuedBlockBuildAreaDirty() {
@@ -2106,6 +2334,8 @@ export class buildingManager{
 
     static _startQueuedBlockConstruction(task) {
         if (!task) return;
+        if (this._isBlockBuildAwaitingSiteClear(task)) return;
+        this._clearBlockBuildSiteCrops(task, task.teamNumber ?? 1);
         task.totalDuration = Math.max(task.duration || 1, Number(task.totalDuration || task.duration || 1));
         task._constructionStarted = true;
         this._blockNavForQueuedBlockTask(task);
@@ -2139,7 +2369,7 @@ export class buildingManager{
 
         sprite.on("pointerdown", () => {
             const selectedBuilders = this.getSelectedBuilders(teamNumber);
-            if (selectedBuilders.length) {
+            if (selectedBuilders.length && !this._isBlockBuildAwaitingSiteClear(task)) {
                 this.assignSelectedBuildersToTask(task, CONTROL_STATES.BUILD_MODE_B, selectedBuilders);
                 return;
             }
@@ -2160,7 +2390,7 @@ export class buildingManager{
         task.constructionSprite = null;
     }
 
-    static cancelQueuedBlockBuild(task, teamNumber = 1) {
+    static cancelQueuedBlockBuild(task, teamNumber = 1, options = {}) {
         teamNumber = Number(teamNumber);
         task = this._normalizeBlockBuildTask(task, teamNumber);
         if (!task) return false;
@@ -2169,6 +2399,10 @@ export class buildingManager{
         const builders = (team?.builderList || []).filter((troop) =>
             troop?.active && troop.task && this._sameQueuedBuildTask(troop.task, task)
         );
+
+        if (task.pendingDestroyJobId && options?.cancelLinkedDestroyJob !== false) {
+            this.cancelQueuedDestroyJob(task.pendingDestroyJobId, teamNumber, { cancelLinkedBuilds: false });
+        }
 
         Teams.removeFromStateArray(teamNumber, "blockBuildingStates", task);
         for (const troop of builders) {
@@ -2189,6 +2423,10 @@ export class buildingManager{
         if (!task) return null;
         task._navBlocked = false;
         this.ensureQueuedBlockBuildGhost(task, teamNumber);
+        if (this._isBlockBuildAwaitingSiteClear(task)) {
+            this._activateLinkedBuildsIfDestroyJobComplete(task.pendingDestroyJobId, teamNumber);
+            return task;
+        }
         if (task._constructionStarted) {
             this._blockNavForQueuedBlockTask(task);
         }
@@ -2205,10 +2443,34 @@ export class buildingManager{
         if (!normalized) return null;
         normalized.refundCost = normalized.refundCost ?? normalized.type?.cost ?? normalized.buildType?.cost ?? null;
 
+        const site = this._analyzeBlockBuildSite(normalized, teamNumber);
+        if (!site.ok) {
+            this._refundQueuedBuildCost(normalized, teamNumber);
+            return null;
+        }
+
+        normalized.siteClearCropTiles = site.crops || [];
+        normalized.siteClearCropsCleared = !normalized.siteClearCropTiles.length;
+        if (site.walls?.length) {
+            normalized.pendingDestroyJobId = normalized.pendingDestroyJobId ?? this.createDestroyJobId(teamNumber);
+            normalized.awaitingSiteClear = true;
+            normalized.siteClearCompleted = false;
+        } else {
+            normalized.pendingDestroyJobId = null;
+            normalized.awaitingSiteClear = false;
+            normalized.siteClearCompleted = true;
+        }
+
         team.blockBuildingStates.push(normalized);
         AudioManager.playBuildQueued?.();
         this.ensureQueuedBlockBuildGhost(normalized, teamNumber);
-        this.assignTroopToBuildBlock(teamNumber);
+        if (site.walls?.length) {
+            this._createSiteClearDestroyJobForBuild(normalized, site.walls, teamNumber);
+            this.assignTroopsToDestroyTile?.(teamNumber);
+        } else {
+            this.assignTroopToBuildBlock(teamNumber);
+        }
+        this._clearActivePlacementGhost();
         return normalized;
     }
 
@@ -2342,6 +2604,8 @@ export class buildingManager{
             teamNumber: Number(teamNumber),
             destroyJobId,
             destroyJobOrder: t.destroyJobOrder ?? team.destroyTileStates.length,
+            linkedBuildTaskId: t.linkedBuildTaskId ?? null,
+            siteClearForBuild: !!t.siteClearForBuild,
             queueKey: "destroyTileStates",
             // ✅ store what the tile WAS so Builder.js can refund correctly
             originalGridVal: t.originalGridVal,
@@ -2375,6 +2639,8 @@ export class buildingManager{
                 teamNumber: Number(teamNumber),
                 destroyJobId,
                 destroyJobOrder: task.destroyJobOrder ?? team.destroyStates.length,
+                linkedBuildTaskId: task.linkedBuildTaskId ?? null,
+                siteClearForBuild: !!task.siteClearForBuild,
                 queueKey: "destroyStates",
             });
         });
@@ -2604,7 +2870,7 @@ export class buildingManager{
             Map.enemyRegionDrawer?.markDirty?.();
             Map.enemyRegionSystem?.ensureUpToDate?.();
 
-            AudioManager.playSound("sfx_building_complete", { volume: 0.2 });
+            AudioManager.playWorldSound("sfx_building_complete", { volume: 0.2 });
 
             const completedTask = liveTask;
             this._clearBuilderQueuedBuildState(troop, {
@@ -2911,6 +3177,15 @@ export class buildingManager{
     static beginBuildingBlock(sprite) {
         let task = sprite.task;
 
+        if (this._isBlockBuildAwaitingSiteClear(task)) {
+            this._clearBuilderQueuedBuildState(sprite, {
+                queueKey: "blockBuildingStates",
+                removeQueueTask: false,
+                clearGhost: false,
+            });
+            return;
+        }
+
         if (!task || task.duration <= 0) {
             this._clearBuilderQueuedBuildState(sprite, {
                 queueKey: "blockBuildingStates",
@@ -2985,7 +3260,7 @@ export class buildingManager{
                         this.consumeRequiredMaterials(cost, teamNumber);
                     }
 
-                    AudioManager.playSound("sfx_building_complete");
+                    AudioManager.playWorldSound("sfx_building_complete");
 
                     this.clearQueuedBlockBuildGhost(task);
 
@@ -3142,7 +3417,7 @@ export class buildingManager{
             if (task.duration <= 0) {
                 if (sprite.timer) { sprite.timer.remove(false); sprite.timer = null; }
                 console.log("Done Destroying.");
-                AudioManager.playSound("sfx_building_collapse");
+                AudioManager.playWorldSound("sfx_building_collapse");
                 this._completeDestroyBlock(sprite, task);   // ✅ single source of truth
                 return;
             }
@@ -3150,7 +3425,7 @@ export class buildingManager{
                 console.log(`sprite: ${sprite.id} continue building with new duration ${task.duration}`)
                 sprite.timer.remove(false);
                 sprite.timer = null;
-                AudioManager.playSound("sfx_building_damage");
+                AudioManager.playWorldSound("sfx_building_damage");
                 // 🔥 Restart another delayed call if still destroying
                 this.beginDestroyingBlock(sprite);
             }
@@ -3276,51 +3551,7 @@ export class buildingManager{
             task.value.destroy(); // fallback: just sprite
         }
 
-        if(task.type.block || task.type.stayBlocked){
-            // unblock tiles under footprint
-            const blockTiles = [];
-            for (let i = task.y; i < task.type.lenY + task.y; i++) {
-                for (let j = task.x; j < task.type.lenX + task.x; j++) {
-                    blockTiles.push({ x: j, y: i });
-
-                    if (Array.isArray(Map.grid[i][j])) Map.grid[i][j] = Map.grid[i][j][0];
-
-                    // unblocked for BOTH teams
-                    Map.navGrid[i][j] = 1;
-                    Map.enemyNavGrid[i][j] = 1;
-
-                    Map.enemyRegionSystem?.markDirty?.();
-                    Map.enemyRegionSystem?.ensureUpToDate?.();
-                }
-            }
-
-            // Patch the overview texture locally instead of forcing a full rebuild.
-            this.scene?.zoomMixer?.updateOverviewCell?.(
-                task.x,
-                task.y,
-                Map.grid,
-                task.type.lenX,
-                task.type.lenY
-            );
-
-            // unblock normal navmesh
-            const change = this.NavMeshUpdater.blockTiles(blockTiles, true);
-            if (change && change.removedPolyIds) {
-                PathRegistry.handlePolysRemoved(Map.navMesh, change.removedPolyIds, change.addedPolyIds);
-            }
-
-            // unblock enemy navmesh
-            const enemyChange = this.EnemyNavMeshUpdater.blockTiles(blockTiles, true);
-            if (enemyChange && enemyChange.removedPolyIds) {
-                PathRegistry.handlePolysRemoved(Map.enemyNavMesh, enemyChange.removedPolyIds, enemyChange.addedPolyIds);
-            }
-
-            // mark dirty regions/drawers
-            Map.regionSystem?.markDirty?.();
-            Map.regionDrawer?.markDirty?.();
-            Map.enemyRegionSystem?.markDirty?.();
-            Map.enemyRegionDrawer?.markDirty?.();
-        }
+        this.clearBlockFootprint(task.x, task.y, task.type);
 
         // per-unit callbacks (kept from your completion block)
         if (sprite.type == Brawler || sprite.type == Blademaster || sprite.type == Gunslinger) {
@@ -3343,6 +3574,58 @@ export class buildingManager{
         // ✅ reassign the killer
         Teams.movePlayerState(sprite, CONTROL_STATES.TRACK_MODE);
         if (destroyJobId) this.refreshQueuedDestroyJobVisuals(teamNumber);
+        if (destroyJobId) this._activateLinkedBuildsIfDestroyJobComplete(destroyJobId, teamNumber);
+    }
+
+    static clearBlockFootprint(x, y, type, opts = {}) {
+        if (!type?.block && !type?.stayBlocked) return false;
+
+        const lenX = Math.max(1, Number(type.lenX || 1) || 1);
+        const lenY = Math.max(1, Number(type.lenY || 1) || 1);
+        const startX = Number(x);
+        const startY = Number(y);
+        if (!Number.isFinite(startX) || !Number.isFinite(startY)) return false;
+
+        const blockTiles = [];
+        for (let row = startY; row < startY + lenY; row++) {
+            if (!Map.grid?.[row]) continue;
+            for (let col = startX; col < startX + lenX; col++) {
+                if (Map.grid[row][col] == null) continue;
+                blockTiles.push({ x: col, y: row });
+
+                if (Array.isArray(Map.grid[row][col])) {
+                    Map.grid[row][col] = Map.grid[row][col][0];
+                }
+
+                if (Map.navGrid?.[row]) Map.navGrid[row][col] = 1;
+                if (Map.enemyNavGrid?.[row]) Map.enemyNavGrid[row][col] = 1;
+            }
+        }
+
+        if (!blockTiles.length) return false;
+
+        if (opts.updateOverview !== false) {
+            this.scene?.zoomMixer?.updateOverviewCell?.(startX, startY, Map.grid, lenX, lenY);
+        }
+
+        if (opts.updateNavMesh !== false) {
+            const change = this.NavMeshUpdater?.blockTiles?.(blockTiles, true);
+            if (change?.removedPolyIds) {
+                PathRegistry.handlePolysRemoved(Map.navMesh, change.removedPolyIds, change.addedPolyIds);
+            }
+
+            const enemyChange = this.EnemyNavMeshUpdater?.blockTiles?.(blockTiles, true);
+            if (enemyChange?.removedPolyIds) {
+                PathRegistry.handlePolysRemoved(Map.enemyNavMesh, enemyChange.removedPolyIds, enemyChange.addedPolyIds);
+            }
+        }
+
+        Map.regionSystem?.markDirty?.();
+        Map.regionDrawer?.markDirty?.();
+        Map.enemyRegionSystem?.markDirty?.();
+        Map.enemyRegionDrawer?.markDirty?.();
+        Map.enemyRegionSystem?.ensureUpToDate?.();
+        return true;
     }
 
 
@@ -3433,6 +3716,7 @@ export class buildingManager{
             sprite.play(sprite.idle);
         }
         if (destroyJobId) this.refreshQueuedDestroyJobVisuals(sprite.body.team);
+        if (destroyJobId) this._activateLinkedBuildsIfDestroyJobComplete(destroyJobId, sprite.body.team);
     }
 
 
@@ -3630,8 +3914,7 @@ export class buildingManager{
 
         const itemDef = UI_ITEM_TYPES[res];
         if (!itemDef) return 0;
-        const storages = Teams.teamLists?.[teamNumber]?.storageList ?? Teams.teamLists?.[`${teamNumber}`]?.storageList ?? [];
-        return storages.reduce((sum, storage) => sum + Math.max(0, Number(storage?.getItemCount?.(itemDef) || 0)), 0);
+        return StorageManager.getStoredItemCountForTeam(teamNumber, itemDef);
     }
 
     static getMissingMaterials(costObj, teamNumber) {
@@ -3699,7 +3982,7 @@ export class buildingManager{
 
         const pct = this._currentConstructionPercent(task);
         const name = this._getTaskDisplayName(task);
-        label.setText(`${name}\n${pct}%`);
+        label.setText(this._isBlockBuildAwaitingSiteClear(task) ? `${name}\nClearing site` : `${name}\n${pct}%`);
 
         const sprite = task.constructionSprite;
         const x = sprite.x;

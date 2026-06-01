@@ -1,4 +1,4 @@
-export const RELIEF_PACKAGE_PRICE = 1500;
+export const RELIEF_PACKAGE_PRICE = 700;
 export const RELIEF_PACKAGE_MAX_COUNT = 1;
 
 // The emergency stipend is intentionally enough to stabilize the town after

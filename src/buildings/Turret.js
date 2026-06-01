@@ -59,8 +59,9 @@ export class Turret {
     const h = this.tileType.lenY * SQUARESIZE;
     this.collider = this.scene.physics.add.staticImage(centerX, centerY, "barrier");
     this.collider.setAlpha(0);
-    this.collider.setSize(w, h);
+    this.collider.setDisplaySize(w, h);
     this.collider.refreshBody();
+    this.collider.body?.setSize?.(w, h, true);
 
     this.sprite.buildingRef = this;
     this.topSprite.buildingRef = this;
@@ -141,7 +142,13 @@ export class Turret {
         item.lenX,
         item.lenY,
         state.topSprite,
-        { padding: 1, protectFarmSpots: true, paddingAllowWalls: true, paddingProtectFarmSpots: false }
+        {
+          padding: 1,
+          protectFarmSpots: true,
+          paddingAllowWalls: true,
+          paddingProtectFarmSpots: false,
+          allowAutoClearSite: true,
+        }
       );
 
       state.baseSprite.setPosition(placement.centerX, placement.centerY);
@@ -373,7 +380,7 @@ export class Turret {
     if (this._destroyed) return;
 
     if (playCollapseSfx) {
-      AudioManager.playSound?.("sfx_building_collapse", { volume: 0.3 });
+      AudioManager.playWorldSound?.("sfx_building_collapse", { volume: 0.3 });
     }
 
     this.destroy();

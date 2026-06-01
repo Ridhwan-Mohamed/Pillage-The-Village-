@@ -13,6 +13,7 @@ import { blockResourceManager } from "../Manager/BlockResourceManager";
 import { FarmBushNode } from "../buildings/FarmBushNode";
 import { buildMarketPriceTable, getGoldOrePayout } from "../balance/GameBalance.js";
 import { cloneSlotFavor } from "./SlotFavorSystem.js";
+import { VisibilitySystem } from "../UI/VisibilitySystem.js";
 
 function fmtMMSS(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -428,6 +429,19 @@ export class ParcelContractInstance {
     };
   }
 
+  _clearVisibilitySourcesInParcelBounds() {
+    const bounds = this.getParcelBounds?.();
+    if (!bounds) return;
+
+    const minX = Number(bounds.x ?? 0);
+    const minY = Number(bounds.y ?? 0);
+    const maxX = minX + Math.max(0, Number(bounds.w ?? 0) - 1);
+    const maxY = minY + Math.max(0, Number(bounds.h ?? 0) - 1);
+    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return;
+
+    VisibilitySystem.clearSourcesInBounds(minX, minY, maxX, maxY);
+  }
+
   _paintMarketParcel() {
     const M = this.map;
 
@@ -477,7 +491,7 @@ export class ParcelContractInstance {
         groundType: "dark_grass",
         pondTiles: 28,
         edgeBuffer: 2,
-        waterWalkable: false,
+        waterWalkable: true,
         nodeDefs: [],
         ms: RESOURCE_CONTRACT_MS.FARM ?? RESOURCE_CONTRACT_MS.FOREST,
       };
@@ -1018,7 +1032,7 @@ export class ParcelContractInstance {
       }
 
       await reveal.complete();
-      AudioManager.playBuildingComplete({ volume: 0.22 });
+      AudioManager.playBuildingComplete({ volume: 0.22, world: true });
       this._startResourceLifecycle(this.contractDurationMs ?? settings.ms);
       return { refreshHandled: true };
     } catch (err) {
@@ -1110,7 +1124,7 @@ export class ParcelContractInstance {
       }
 
       await reveal.complete();
-      AudioManager.playBuildingComplete({ volume: 0.22 });
+      AudioManager.playBuildingComplete({ volume: 0.22, world: true });
       this._setHudLifecycle("active");
       return { refreshHandled: true };
     } catch (err) {
@@ -1325,6 +1339,7 @@ export class ParcelContractInstance {
     }
 
     if (this.type === "FARM") {
+      this._markParcelWaterWalkable();
       FarmBushNode.init(this.scene);
       const entries = Array.isArray(saved.placedObjects) ? saved.placedObjects : [];
       this.placedObjects = [];
@@ -1499,6 +1514,7 @@ export class ParcelContractInstance {
       this._removalCommitted = true;
       this._applyWaterRemovalPlan(removalPlan);
       this._destroyPlacedObjectsForRemoval();
+      this._clearVisibilitySourcesInParcelBounds();
       this._abortResourceWorkAfterRemovalCommitted();
 
       const refreshOpts = {
@@ -1529,9 +1545,11 @@ export class ParcelContractInstance {
         this._removalCommitted = true;
         this._applyWaterRemovalPlan(removalPlan);
         this._destroyPlacedObjectsForRemoval();
+        this._clearVisibilitySourcesInParcelBounds();
         this._abortResourceWorkAfterRemovalCommitted();
       }
       if (this._removalCommitted) {
+        this._clearVisibilitySourcesInParcelBounds();
         this._abortResourceWorkAfterRemovalCommitted();
       }
       this._fallbackRefreshRemovalArea();

@@ -17,6 +17,9 @@ import { Scheduler } from "../ai/scheduler/Scheduler.js";
 import { spawnNorthFort } from "../parcel_system/FortRaidParcel.js";
 import { buildingManager } from "../Manager/buildingManager.js";
 import { restoreCardInventorySnapshot } from "../Cards/CardInventory.js";
+import { OrderRunner } from "../orders/OrderRunner.js";
+import { ORDER_KINDS } from "../orders/OrderTypes.js";
+import { StorageManager } from "../Manager/StorageManager.js";
 
 function cloneSimple(value, fallback) {
   if (value == null) return fallback;
@@ -47,6 +50,8 @@ function rehydrateTaskLike(task, queueKey = null, teamId = null) {
   if (teamId != null && next.teamNumber == null) next.teamNumber = Number(teamId);
   next.assigned = 0;
   delete next.reservedBy;
+  delete next.directOrderId;
+  delete next._ephemeralDirect;
 
   return next;
 }
@@ -95,6 +100,10 @@ function restoreQueuedDestroyVisuals(scene) {
 
 function setSceneResource(scene, key, value) {
   scene[key] = Number(value || 0);
+}
+
+function syncStorageBackedResourceCounters(scene, teamId = "1") {
+  StorageManager.syncStorageBackedResourceCounters(scene, teamId);
 }
 
 function getTeamCardIds(snapshot, teamId = "1") {
@@ -157,6 +166,51 @@ function restoreQueuedItemRef(itemRef) {
   if (typeof itemRef === "object" && itemRef.name) return itemRef;
   if (typeof itemRef !== "string") return null;
   return restoreItemStack({ item: itemRef, amount: 1 })?.item ?? null;
+}
+
+const RESTORABLE_ORDER_KINDS = new Set(Object.values(ORDER_KINDS));
+
+function bumpOrderCounterFromId(id) {
+  const match = typeof id === "string" ? /^gather_(\d+)$/.exec(id) : null;
+  if (!match) return;
+  const next = Number(match[1]) + 1;
+  if (Number.isFinite(next)) {
+    OrderRunner.nextOrderId = Math.max(Number(OrderRunner.nextOrderId || 1), next);
+  }
+}
+
+function restoreCurrentOrder(saved) {
+  if (!saved || typeof saved !== "object") return null;
+  if (saved.status !== "active" || saved.persistent !== true) return null;
+  if (!RESTORABLE_ORDER_KINDS.has(saved.kind)) return null;
+
+  const order = {
+    id: saved.id,
+    kind: saved.kind,
+    status: "active",
+    source: typeof saved.source === "string" ? saved.source : "player",
+    persistent: true,
+  };
+
+  if (typeof saved.resourceType === "string") order.resourceType = saved.resourceType;
+  if (Number.isFinite(Number(saved.radiusTiles))) order.radiusTiles = Number(saved.radiusTiles);
+  if (Array.isArray(saved.nodeKeys)) {
+    order.nodeKeys = saved.nodeKeys.filter((key) => typeof key === "string");
+  }
+  if (saved.center && Number.isFinite(Number(saved.center.x)) && Number.isFinite(Number(saved.center.y))) {
+    order.center = { x: Number(saved.center.x), y: Number(saved.center.y) };
+  }
+  if (saved.anchor && Number.isFinite(Number(saved.anchor.x)) && Number.isFinite(Number(saved.anchor.y))) {
+    order.anchor = { x: Number(saved.anchor.x), y: Number(saved.anchor.y) };
+  }
+  if (saved.shuttingDown) order.shuttingDown = true;
+
+  if (order.kind === ORDER_KINDS.GATHER_TYPE && !order.resourceType) return null;
+  if (order.kind === ORDER_KINDS.GATHER_AREA && (!order.resourceType || !order.center)) return null;
+  if (order.kind === ORDER_KINDS.GATHER_SET && !order.nodeKeys?.length) return null;
+
+  bumpOrderCounterFromId(order.id);
+  return order;
 }
 
 function resolveSavedOvenRef(task, teamId, buildingRegistry) {
@@ -301,6 +355,8 @@ function restoreTeamSnapshots(snapshot) {
       ) || 0
     );
     team.townAutomation = assignPlain(null, saved.townAutomation, {});
+    bumpOrderCounterFromId(team.townAutomation?.waterOrderId);
+    Object.values(team.townAutomation?.gatherOrderIds || {}).forEach((orderId) => bumpOrderCounterFromId(orderId));
     team.cardHand = (saved.cardIds || []).map((id) => CARD_REGISTRY.get(id)).filter(Boolean);
     team.cardInventory = restoreCardInventorySnapshot(saved.cardInventory);
   }
@@ -447,6 +503,7 @@ function restorePlayers(scene, snapshot, buildingRegistry) {
     troop.pendingFuelJob = null;
     troop.taskMeta = null;
     troop.task = null;
+    troop.currentOrder = restoreCurrentOrder(saved.currentOrder);
     troop.contractId = saved.contractId ?? null;
     troop.nightHordeId = saved.nightHordeId ?? null;
     troop.hordeIndex = saved.hordeIndex ?? null;
@@ -558,6 +615,7 @@ export function restoreRunSnapshotIntoScene(scene, snapshot) {
     scene.towerPressureController?.restoreSnapshot?.(snapshot?.parcels?.towerPressure, scene, snapshot);
 
     restorePlayers(scene, snapshot, buildingRegistry);
+    syncStorageBackedResourceCounters(scene, "1");
     scene.restoreShockerBossState?.(snapshot?.progression?.shockerBoss || null);
     restoreQueuedFarmPreviews(scene);
     restoreQueuedBuildVisuals(scene);

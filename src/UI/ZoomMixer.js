@@ -333,6 +333,8 @@ export class ZoomMixer {
     const scene = ZoomMixer.scene;
 
     if (mode === 'overview') {
+      this.mode = 'overview';
+      scene.events?.emit?.("zoom:mode-changed", "overview", duration);
       scene.keyboardSpeed = 30;
       Map.setDetailedWorldVisible?.(false);
       Map.setDetailedWorldPaused?.(true);
@@ -351,9 +353,8 @@ export class ZoomMixer {
         ZoomMixer.mapIconContainer.setVisible(true);
         this._addUnscaledTween({ targets: ZoomMixer.mapIconContainer, alpha: 1, duration, ease: 'Quad.easeInOut' });
       }
-
-      this.mode = 'overview';
     } else {
+      this.mode = 'detailed';
       scene.keyboardSpeed = 10;
       scene.parcelSpawnUI?.setMode?.("detailed");
       scene.parcelSpawnUI?.setVisible(true);
@@ -363,6 +364,7 @@ export class ZoomMixer {
       Map.setDetailedWorldPaused?.(false);
       Map.setDetailedWorldVisible?.(true);
       VisibilitySystem.setOverviewMode(false);
+      scene.events?.emit?.("zoom:mode-changed", "detailed", duration);
       if (this.overviewImage) {
         this._addUnscaledTween({
           targets: this.overviewImage,
@@ -382,7 +384,6 @@ export class ZoomMixer {
           onComplete: () => ZoomMixer.mapIconContainer.setVisible(false)
         });
       }
-      this.mode = 'detailed';
     }
   }
 

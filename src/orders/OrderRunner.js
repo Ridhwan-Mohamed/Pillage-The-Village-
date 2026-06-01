@@ -867,10 +867,15 @@ export class OrderRunner {
     const canReachThreat = (enemy) => {
       if (!enemy?.active) return false;
       if (!enemy.body || enemy.body.team === troop.body?.team) return false;
+      if (Player._canReachWorldForTroop?.(troop, enemy.x, enemy.y)) return true;
       if (!regionSystem?.canReachWorldToWorld) return true;
+
+      const townPoint = Player._regionCheckPointForTroop?.(troop, townCenter.x, townCenter.y);
+      const enemyPoint = Player._regionCheckPointForTroop?.(troop, enemy.x, enemy.y);
+      if (!townPoint || !enemyPoint) return false;
+
       return (
-        regionSystem.canReachWorldToWorld(townCenter.x, townCenter.y, enemy.x, enemy.y) ||
-        regionSystem.canReachWorldToWorld(troop.x, troop.y, enemy.x, enemy.y)
+        regionSystem.canReachWorldToWorld(townPoint.x, townPoint.y, enemyPoint.x, enemyPoint.y)
       );
     };
 

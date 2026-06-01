@@ -130,7 +130,22 @@ export class Clock {
     }
 
     getPhaseInfo() {
-        return PHASE_DEFS[this.getPhaseKey()] || PHASE_DEFS.day;
+        const phase = PHASE_DEFS[this.getPhaseKey()] || PHASE_DEFS.day;
+        if (this.day === 1 && phase.key === "dusk") {
+            return {
+                ...phase,
+                help: "First night is free: no raiders arrive tonight.\nUse dusk to finish setup.",
+                actionText: "Free first night prep",
+            };
+        }
+        if (this.day === 1 && phase.key === "night") {
+            return {
+                ...phase,
+                help: "Free first night: no raiders tonight.\nThe first horde arrives on night two.",
+                actionText: "Free first night",
+            };
+        }
+        return phase;
     }
 
     canBuyParcels() {
@@ -207,7 +222,13 @@ export class Clock {
             return `Dusk in ${Clock.formatMinutesAsClock(this._minutesUntilHour(DUSK_START))}`;
         }
         if (phase === "dusk") {
+            if (this.day === 1) {
+                return `Free night in ${Clock.formatMinutesAsClock(this._minutesUntilHour(NIGHT_START))}`;
+            }
             return `Night in ${Clock.formatMinutesAsClock(this._minutesUntilHour(NIGHT_START))}`;
+        }
+        if (this.day === 1) {
+            return `Free night ends in ${Clock.formatMinutesAsClock(this._minutesUntilHour(DAWN_START))}`;
         }
         return `Survive ${Clock.formatMinutesAsClock(this._minutesUntilHour(DAWN_START))}`;
     }
@@ -337,7 +358,8 @@ export class Clock {
 
         // ✅ VisibilitySystem expects a light floor (BRIGHTNESS), not darkness.
         const ambientBrightness = 1 - alpha;
-        VisibilitySystem.setAmbient(ambientBrightness);
+        const ambientTint = alpha > 0 ? 0x020716 : 0x000000;
+        VisibilitySystem.setAmbient(ambientBrightness, ambientTint);
     }
 
     pause() {

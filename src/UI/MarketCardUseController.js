@@ -5,6 +5,7 @@ import {
   WORLD_DIMENSIONX,
   WORLD_DIMENSIONY,
   TILE_MAP,
+  TILE_TYPES,
   PARCEL,
   showAlert,
   showGhostText,
@@ -39,6 +40,8 @@ const MELEE_CRIT_MS = 32_000;
 const PROJECTILE_CRIT_MS = 32_000;
 const SECOND_WIND_STAMINA_FRACTION = 0.68;
 const FORTIFY_MS = 120_000;
+const AUTO_WALL_TYPE = "woodWall";
+const AUTO_WALL_DOOR_TYPE = "woodWall_door";
 const HEAL_PARTICLE_DEPTH = (UIDEPTH ?? 10) + 125;
 const TARGETED_MARKET_ACTIVATIONS = new Set([
   "auto_wall",
@@ -74,8 +77,16 @@ function centerOfCell(x, y) {
   };
 }
 
+function mapWidth() {
+  return Math.max(1, GameMap.grid?.[0]?.length || WORLD_DIMENSIONX);
+}
+
+function mapHeight() {
+  return Math.max(1, GameMap.grid?.length || WORLD_DIMENSIONY);
+}
+
 function inWorldBounds(x, y) {
-  return x >= 0 && y >= 0 && x < WORLD_DIMENSIONX && y < WORLD_DIMENSIONY;
+  return x >= 0 && y >= 0 && x < mapWidth() && y < mapHeight();
 }
 
 function cellTypeName(x, y) {
@@ -353,11 +364,26 @@ function computeAutoWallCells(scene) {
       out.push({
         x: cell.x,
         y: cell.y,
-        tileType: gridKey(cell.x, cell.y) === doorKey ? "wall_door" : "wall",
+        tileType: gridKey(cell.x, cell.y) === doorKey ? AUTO_WALL_DOOR_TYPE : AUTO_WALL_TYPE,
       });
     }
   }
   return out;
+}
+
+function placeAutoWallDoor(scene, x, y, teamNumber = 1) {
+  const def = TILE_TYPES[AUTO_WALL_DOOR_TYPE];
+  const current = GameMap.grid?.[y]?.[x];
+  if (!def || current == null) return false;
+
+  const floorVal = Array.isArray(current) ? current[0] : current;
+
+  GameMap.grid[y][x] = [floorVal, def.grid];
+  GameMap._refreshRenderCacheAround?.(x, y);
+  if (GameMap.navGrid?.[y]) GameMap.navGrid[y][x] = 1;
+  if (GameMap.enemyNavGrid?.[y]) GameMap.enemyNavGrid[y][x] = 0;
+  Wall.ensureAt(scene, x, y, teamNumber);
+  return true;
 }
 
 function placeWallCells(scene, cells) {
@@ -366,12 +392,21 @@ function placeWallCells(scene, cells) {
   let doors = 0;
   const refreshKeys = new Set();
   for (const cell of cells) {
-    const tileType = cell.tileType === "wall_door" ? "wall_door" : "wall";
-    const isDoor = tileType === "wall_door";
-    if (GameMap.navGrid?.[cell.y]) GameMap.navGrid[cell.y][cell.x] = isDoor ? 1 : 0;
-    if (GameMap.enemyNavGrid?.[cell.y]) GameMap.enemyNavGrid[cell.y][cell.x] = 0;
-    GameMap.placeTile(cell.x, cell.y, tileType);
-    Wall.ensureAt(scene, cell.x, cell.y, 1);
+    const tileType = cell.tileType === AUTO_WALL_DOOR_TYPE ? AUTO_WALL_DOOR_TYPE : AUTO_WALL_TYPE;
+    const isDoor = tileType === AUTO_WALL_DOOR_TYPE;
+    let placed = false;
+
+    if (isDoor) {
+      placed = placeAutoWallDoor(scene, cell.x, cell.y, 1);
+    } else {
+      if (GameMap.navGrid?.[cell.y]) GameMap.navGrid[cell.y][cell.x] = 0;
+      if (GameMap.enemyNavGrid?.[cell.y]) GameMap.enemyNavGrid[cell.y][cell.x] = 0;
+      GameMap.placeTile(cell.x, cell.y, AUTO_WALL_TYPE);
+      Wall.ensureAt(scene, cell.x, cell.y, 1);
+      placed = true;
+    }
+
+    if (!placed) continue;
     if (isDoor) doors += 1;
     else walls += 1;
     for (let yy = cell.y - 1; yy <= cell.y + 1; yy++) {
@@ -399,7 +434,7 @@ function placeWallCells(scene, cells) {
     scene.rebuildBothNavMeshes?.();
     scene.zoomMixer?.buildOverviewTextureFromGrid?.(GameMap.grid, SQUARESIZE, (cell) => colorFor(cell));
   }
-  return { total: cells.length, walls, doors };
+  return { total: walls + doors, walls, doors };
 }
 
 function findBuildingAtGrid(gx, gy) {
@@ -723,6 +758,10 @@ function spawnDecoyBeacon(scene, gx, gy) {
   if (GameMap.enemyNavGrid?.[gy]) GameMap.enemyNavGrid[gy][gx] = 0;
   scene.navMeshUpdater?.blockTile?.(gx, gy);
   scene.enemyNavMeshUpdater?.blockTile?.(gx, gy);
+  GameMap.regionSystem?.markDirty?.();
+  GameMap.regionDrawer?.markDirty?.();
+  GameMap.enemyRegionSystem?.markDirty?.();
+  GameMap.enemyRegionDrawer?.markDirty?.();
 
   const decoy = {
     x: gx,
@@ -760,6 +799,10 @@ function spawnDecoyBeacon(scene, gx, gy) {
       if (GameMap.enemyNavGrid?.[gy]) GameMap.enemyNavGrid[gy][gx] = previousEnemyNav ?? 1;
       scene.navMeshUpdater?.blockTiles?.([{ x: gx, y: gy }], true);
       scene.enemyNavMeshUpdater?.blockTiles?.([{ x: gx, y: gy }], true);
+      GameMap.regionSystem?.markDirty?.();
+      GameMap.regionDrawer?.markDirty?.();
+      GameMap.enemyRegionSystem?.markDirty?.();
+      GameMap.enemyRegionDrawer?.markDirty?.();
       collider.destroy?.();
       sprite.destroy?.();
     },
@@ -1150,7 +1193,7 @@ export class MarketCardUseController {
   _helperText() {
     if (!this.card) return "";
     if (this.activation === "auto_wall") {
-      const doorCount = this.autoWallCells.filter((cell) => cell.tileType === "wall_door").length;
+      const doorCount = this.autoWallCells.filter((cell) => cell.tileType === AUTO_WALL_DOOR_TYPE).length;
       return this.autoWallCells.length
         ? `AUTO WALL | Previewing ${this.autoWallCells.length} valid wall cells${doorCount ? ` with ${doorCount} doors` : ""}`
         : "AUTO WALL | No valid perimeter cells found";
@@ -1210,7 +1253,7 @@ export class MarketCardUseController {
 
     if (this.activation === "auto_wall") {
       for (const cell of this.autoWallCells) {
-        const isDoor = cell.tileType === "wall_door";
+        const isDoor = cell.tileType === AUTO_WALL_DOOR_TYPE;
         g.fillStyle(isDoor ? 0xffd978 : 0x7bd9ff, isDoor ? 0.24 : 0.18);
         g.lineStyle(2, isDoor ? 0xfff2b3 : 0x7bd9ff, 0.84);
         g.fillRect(cell.x * SQUARESIZE + 2, cell.y * SQUARESIZE + 2, SQUARESIZE - 4, SQUARESIZE - 4);

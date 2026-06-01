@@ -170,7 +170,25 @@ export class CombatSpacingCoordinator {
             const unassigned = viable.filter(target =>
                 this.getTargetAssignmentCounts(teamNumber, target, { excludeTroop: troop }).total <= 0
             );
-            if (unassigned.length) viable = unassigned;
+            if (unassigned.length) {
+                let spreadViable = unassigned;
+                const maxExtraDistance = Number(opts.strictTargetSpreadMaxExtraDistance);
+                const maxRatio = Number(opts.strictTargetSpreadMaxRatio);
+                if (Number.isFinite(maxExtraDistance) || Number.isFinite(maxRatio)) {
+                    const closestDistance = viable.reduce((best, target) => {
+                        const dist = worldDistance(troop, target);
+                        return dist < best ? dist : best;
+                    }, Infinity);
+                    const maxDistance = Math.min(
+                        Number.isFinite(maxExtraDistance) ? closestDistance + Math.max(0, maxExtraDistance) : Infinity,
+                        Number.isFinite(maxRatio) ? closestDistance * Math.max(1, maxRatio) : Infinity
+                    );
+                    const capped = unassigned.filter(target => worldDistance(troop, target) <= maxDistance);
+                    if (capped.length) spreadViable = capped;
+                    else spreadViable = viable;
+                }
+                viable = spreadViable;
+            }
         }
 
         let best = null;

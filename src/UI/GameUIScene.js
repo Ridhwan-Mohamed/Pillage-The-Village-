@@ -1048,7 +1048,7 @@ export class GameUIScene extends Phaser.Scene {
   }
 
   _getTopHudNeedCount() {
-    return Teams.teamLists?.["1"]?.playerList?.length || 0;
+    return DailyNeedsTracker.getNeedCount?.("1") ?? (Teams.teamLists?.["1"]?.playerList?.length || 0);
   }
 
   _getHousingHoverLabel() {
@@ -3512,6 +3512,7 @@ export class GameUIScene extends Phaser.Scene {
       this.uiBottomBar?.ui,
       this.raiderEdgeHud,
       this.pauseMenuButton,
+      this.zoomControls,
     ].filter(Boolean);
   }
 
@@ -3950,6 +3951,7 @@ export class GameUIScene extends Phaser.Scene {
         wordWrap: { width: 320 },
       }).setOrigin(0.5);
       const leave = () => {
+        this.worldScene?.setSimulationPause?.("restart_to_main_menu", true);
         this._destroyPauseMenu(true);
         this.worldScene?.restartToMainMenu?.({ hostScene: this });
       };
@@ -5891,9 +5893,12 @@ export class GameUIScene extends Phaser.Scene {
       return;
     }
     if (!this._bossStorm) {
+      const flashDepth = (UIDEPTH ?? 10) + 6000;
       const rainGraphics = this.add.graphics().setDepth(UIDEPTH + 38);
+      rainGraphics.setScrollFactor?.(0);
       const flashRect = this.add.rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0xe5f6ff, 0)
-        .setDepth(UIDEPTH + 39);
+        .setDepth(flashDepth)
+        .setScrollFactor(0);
       const drops = Array.from({ length: 120 }, () => ({
         x: Math.random() * this.scale.width,
         y: Math.random() * this.scale.height,
@@ -5906,12 +5911,14 @@ export class GameUIScene extends Phaser.Scene {
         rainGraphics,
         flashRect,
         drops,
+        flashDepth,
         lastAt: this.time.now,
-        nextThunderAt: this.time.now + Phaser.Math.Between(4000, 9000),
+        nextThunderAt: this.time.now + Phaser.Math.Between(1500, 4000),
         thunderGraphics: new Set(),
       };
+      this.children.bringToTop?.(flashRect);
     } else if (!Number.isFinite(Number(this._bossStorm.nextThunderAt))) {
-      this._bossStorm.nextThunderAt = this.time.now + Phaser.Math.Between(4000, 9000);
+      this._bossStorm.nextThunderAt = this.time.now + Phaser.Math.Between(1500, 4000);
     }
     AudioManager.startBossRainAmbience({ volume: 0.3 });
   }
@@ -5921,7 +5928,14 @@ export class GameUIScene extends Phaser.Scene {
     const flashRect = this._bossStorm?.flashRect;
     if (!flashRect) return;
     this.tweens.killTweensOf(flashRect);
-    flashRect.setAlpha(alpha);
+    flashRect
+      .setScrollFactor(0)
+      .setDepth(this._bossStorm.flashDepth ?? ((UIDEPTH ?? 10) + 6000))
+      .setPosition(this.scale.width / 2, this.scale.height / 2)
+      .setSize(this.scale.width, this.scale.height)
+      .setAlpha(alpha)
+      .setVisible(true);
+    this.children.bringToTop?.(flashRect);
     this.tweens.add({
       targets: flashRect,
       alpha: 0,
@@ -5946,9 +5960,10 @@ export class GameUIScene extends Phaser.Scene {
     const width = Math.max(1, this.scale.width);
     const height = Math.max(1, this.scale.height);
     const graphic = this.add.graphics()
-      .setDepth(UIDEPTH + 40)
+      .setDepth(storm.flashDepth ?? ((UIDEPTH ?? 10) + 6001))
       .setAlpha(0.95);
     graphic.setScrollFactor?.(0);
+    this.children.bringToTop?.(graphic);
 
     const startX = Phaser.Math.Between(Math.round(width * 0.12), Math.round(width * 0.88));
     const endX = Phaser.Math.Clamp(startX + Phaser.Math.Between(-190, 190), 36, width - 36);
@@ -6044,11 +6059,13 @@ export class GameUIScene extends Phaser.Scene {
 
     storm.flashRect.setPosition(this.scale.width / 2, this.scale.height / 2);
     storm.flashRect.setSize(this.scale.width, this.scale.height);
+    storm.flashRect.setScrollFactor?.(0);
+    storm.flashRect.setDepth?.(storm.flashDepth ?? ((UIDEPTH ?? 10) + 6000));
     if (!Number.isFinite(Number(storm.nextThunderAt))) {
-      storm.nextThunderAt = now + Phaser.Math.Between(4000, 9000);
+      storm.nextThunderAt = now + Phaser.Math.Between(1500, 4000);
     }
     if (now >= Number(storm.nextThunderAt || 0)) {
-      storm.nextThunderAt = now + Phaser.Math.Between(10000, 22000);
+      storm.nextThunderAt = now + Phaser.Math.Between(5000, 10000);
       this._triggerBossStormThunder();
     }
   }

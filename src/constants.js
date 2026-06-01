@@ -47,8 +47,8 @@ export const CONTROL_STATES = {
 }
 
 export const MAX_CROP_GROWTH_STAGE = 2; // assuming 0-4 frames
-export var WORLD_DIMENSIONX = 100;
-export var WORLD_DIMENSIONY = 100;
+export var WORLD_DIMENSIONX = 250;
+export var WORLD_DIMENSIONY = 250;
 export const UIDEPTH = 10
 export const FLOORDEPTH = 2
 export const BLOCKDEPTH = FLOORDEPTH+1

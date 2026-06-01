@@ -63,6 +63,8 @@ function getCardDefaults() {
       Weapons: {
         pistolAccuracy: weapons.pistol.accuracy,
         pistolDuration: weapons.pistol.duration,
+        pistolBaseDmg: weapons.pistol.baseDmg,
+        pistolCritDmg: weapons.pistol.critDmg,
         boxingGlovesBaseDmg: weapons.boxingGloves.baseDmg,
         boxingGlovesCritDmg: weapons.boxingGloves.critDmg,
         swordBaseDmg: weapons.sword.baseDmg,
@@ -107,6 +109,8 @@ export function resetCardModifiedDefaults() {
   Teams.cropReseedChance = defaults.Teams.cropReseedChance;
   weapons.pistol.accuracy = defaults.Weapons.pistolAccuracy;
   weapons.pistol.duration = defaults.Weapons.pistolDuration;
+  weapons.pistol.baseDmg = defaults.Weapons.pistolBaseDmg;
+  weapons.pistol.critDmg = defaults.Weapons.pistolCritDmg;
   weapons.boxingGloves.baseDmg = defaults.Weapons.boxingGlovesBaseDmg;
   weapons.boxingGloves.critDmg = defaults.Weapons.boxingGlovesCritDmg;
   weapons.sword.baseDmg = defaults.Weapons.swordBaseDmg;

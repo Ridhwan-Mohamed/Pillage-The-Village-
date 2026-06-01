@@ -4,18 +4,21 @@ import { UIDEPTH } from '../constants';
 import { Teams } from '../Teams';
 import { UI_ITEM_TYPES } from './UIConstants';
 import { BUILDING_PANEL_TEXT_STYLES, createBuildingHoverPanel } from './BuildingTheme';
+import { animateOverlayPop, isOverviewMode } from './OverlayPopAnimator';
 
 export class ClayOvenUI {
     static scene = null; // set externally
     static _onOvenUpdated = null;
     static _onOvenAdded = null;
     static _onOvenRemoved = null;
+    static _onZoomModeChanged = null;
 
     static init(scene) {
         if (this.scene?.events && this._onOvenUpdated) {
             this.scene.events.off('oven:updated', this._onOvenUpdated);
             this.scene.events.off('oven:added', this._onOvenAdded);
             this.scene.events.off('oven:removed', this._onOvenRemoved);
+            this.scene.events.off('zoom:mode-changed', this._onZoomModeChanged);
         }
 
         this.scene = scene;
@@ -23,10 +26,95 @@ export class ClayOvenUI {
         this._onOvenUpdated = (oven) => this.refreshStatus(oven);
         this._onOvenAdded = (oven) => this.refreshStatus(oven);
         this._onOvenRemoved = (oven) => this.hideStatus(oven);
+        this._onZoomModeChanged = (mode, duration) => this.applyOverviewMode(mode, duration);
         this.scene.events.on('oven:updated', this._onOvenUpdated);
         this.scene.events.on('oven:added', this._onOvenAdded);
         this.scene.events.on('oven:removed', this._onOvenRemoved);
+        this.scene.events.on('zoom:mode-changed', this._onZoomModeChanged);
         Teams.teamLists?.[1]?.ovenList?.forEach((oven) => this.refreshStatus(oven));
+    }
+
+    static _isOverviewMode() {
+        return isOverviewMode(this.scene);
+    }
+
+    static _eachOven(fn) {
+        for (const team of Object.values(Teams.teamLists || {})) {
+            const ovens = Array.isArray(team?.ovenList) ? team.ovenList : [];
+            ovens.forEach(fn);
+        }
+    }
+
+    static applyOverviewMode(mode, duration = 160) {
+        const overview = mode === 'overview';
+        this._eachOven((oven) => {
+            if (overview) {
+                this._hideStatusForOverview(oven, duration);
+                this._hideMinorForOverview(oven, duration);
+            } else {
+                this.refreshStatus(oven);
+                if (oven?.isHovered) this.showMinor(oven, { duration });
+                else if (oven?.minorUI?.hiddenForOverview) this.hideMinor(oven, { animate: false });
+            }
+        });
+    }
+
+    static _addStatusPulse(oven, state) {
+        const ui = oven?.statusUI;
+        if (!ui?.container || !state || this._isOverviewMode()) return;
+
+        ui.tween?.remove?.();
+        ui.tween = null;
+
+        const startAlpha = state.key === 'cooking' ? 0.96 : 1;
+        const endAlpha = state.key === 'cooking' ? 0.66 : 0.52;
+        ui.container.setAlpha(startAlpha).setScale(1).setVisible(true);
+        ui.tween = this.scene?.tweens?.add?.({
+            targets: ui.container,
+            alpha: { from: startAlpha, to: endAlpha },
+            duration: state.key === 'cooking' ? 920 : 560,
+            ease: 'Sine.easeInOut',
+            yoyo: true,
+            repeat: -1,
+        }) ?? null;
+    }
+
+    static _showStatusWithPop(oven, state, shouldPop = false) {
+        const ui = oven?.statusUI;
+        if (!ui?.container) return;
+
+        ui.hiddenForOverview = false;
+        ui.tween?.remove?.();
+        ui.tween = null;
+
+        const targetAlpha = state.key === 'cooking' ? 0.96 : 1;
+        if (shouldPop) {
+            animateOverlayPop(this.scene, ui.container, true, {
+                alpha: targetAlpha,
+                duration: 150,
+                onComplete: () => {
+                    if (oven?.statusUI === ui) this._addStatusPulse(oven, state);
+                },
+            });
+        } else {
+            this._addStatusPulse(oven, state);
+        }
+    }
+
+    static _hideStatusForOverview(oven, duration = 150) {
+        const ui = oven?.statusUI;
+        if (!ui?.container || ui.hiddenForOverview) return;
+        ui.hiddenForOverview = true;
+        ui.tween?.remove?.();
+        ui.tween = null;
+        animateOverlayPop(this.scene, ui.container, false, { duration });
+    }
+
+    static _hideMinorForOverview(oven, duration = 150) {
+        const ui = oven?.minorUI;
+        if (!ui?.root || ui.hiddenForOverview) return;
+        ui.hiddenForOverview = true;
+        animateOverlayPop(this.scene, ui.root, false, { duration });
     }
 
     static updateAllOvens(speedMultiplier = 0) {
@@ -95,11 +183,19 @@ export class ClayOvenUI {
             return;
         }
 
+        if (this._isOverviewMode()) {
+            this._hideStatusForOverview(oven);
+            return;
+        }
+
         let ui = oven.statusUI;
+        const shouldPop = !ui || ui.hiddenForOverview || ui.container?.visible === false;
         if (!ui) {
             const container = this.scene.add.container(0, 0)
                 .setDepth(UIDEPTH + 1)
-                .setScrollFactor(0);
+                .setScrollFactor(0)
+                .setAlpha(0)
+                .setScale(0.82);
 
             const title = this.scene.add.text(0, -6, '', {
                 ...BUILDING_PANEL_TEXT_STYLES.compact,
@@ -145,31 +241,30 @@ export class ClayOvenUI {
         ui.detail.setText(state.detail).setColor(state.detailColor);
         ui.state = state.key;
         ui.updatePosition?.();
-
-        ui.tween?.remove();
-        ui.container.setAlpha(state.key === 'cooking' ? 0.96 : 1);
-        ui.tween = this.scene.tweens.add({
-            targets: ui.container,
-            alpha: { from: state.key === 'cooking' ? 0.96 : 1, to: state.key === 'cooking' ? 0.66 : 0.52 },
-            duration: state.key === 'cooking' ? 920 : 560,
-            ease: 'Sine.easeInOut',
-            yoyo: true,
-            repeat: -1,
-        });
+        this._showStatusWithPop(oven, state, shouldPop);
     }
 
     static hideStatus(oven) {
         if (!oven?.statusUI) return;
         const { container, updatePosition, tween } = oven.statusUI;
         tween?.remove();
+        container?._overlayPopTween?.remove?.();
         if (updatePosition) this.scene?.events?.off('update', updatePosition);
         container?.destroy?.();
         oven.statusUI = null;
     }
 
     // === Minor UI (hover) ===
-    static showMinor(oven) {
-        if (oven.minorUI) return;
+    static showMinor(oven, opts = {}) {
+        if (this._isOverviewMode()) return;
+        if (oven.minorUI) {
+            oven.minorUI.hiddenForOverview = false;
+            oven.minorUIUpdater?.();
+            animateOverlayPop(this.scene, oven.minorUI.root, true, {
+                duration: Math.max(0, Number(opts.duration ?? 140) || 0),
+            });
+            return;
+        }
 
         const panel = createBuildingHoverPanel(this.scene, {
             width: 128,
@@ -178,6 +273,7 @@ export class ClayOvenUI {
             scrollFactor: 0,
             accentColor: 0xf0b86a,
         });
+        panel.setAlpha(0).setScale(0.82);
 
         const status = this.scene.add.text(0, 0, '', {
             ...BUILDING_PANEL_TEXT_STYLES.compactBody,
@@ -185,7 +281,7 @@ export class ClayOvenUI {
         }).setOrigin(0.5).setLineSpacing(2);
 
         panel.add(status);
-        oven.minorUI = { root: panel, status };
+        oven.minorUI = { root: panel, status, hiddenForOverview: false };
 
         // 🔁 Frame-by-frame position update in screen space
         oven.minorUIUpdater = () => {
@@ -203,16 +299,35 @@ export class ClayOvenUI {
         };
 
         this.scene.events.on('update', oven.minorUIUpdater);
+        oven.minorUIUpdater();
+        animateOverlayPop(this.scene, panel, true, {
+            duration: Math.max(0, Number(opts.duration ?? 140) || 0),
+        });
     }
 
-    static hideMinor(oven) {
+    static hideMinor(oven, opts = {}) {
         if (oven.minorUI) {
-            oven.minorUI.root?.destroy?.();
-            oven.minorUI = null;
+            const ui = oven.minorUI;
+            const root = ui.root;
+            const destroy = () => {
+                if (oven.minorUI !== ui) return;
+                root?._overlayPopTween?.remove?.();
+                root?.destroy?.();
+                oven.minorUI = null;
 
-            if (oven.minorUIUpdater) {
-                this.scene.events.off('update', oven.minorUIUpdater);
-                oven.minorUIUpdater = null;
+                if (oven.minorUIUpdater) {
+                    this.scene.events.off('update', oven.minorUIUpdater);
+                    oven.minorUIUpdater = null;
+                }
+            };
+
+            if (opts.animate === false || !root?.visible) {
+                destroy();
+            } else {
+                animateOverlayPop(this.scene, root, false, {
+                    duration: Math.max(0, Number(opts.duration ?? 120) || 0),
+                    onComplete: destroy,
+                });
             }
         }
     }

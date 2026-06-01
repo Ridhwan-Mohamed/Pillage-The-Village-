@@ -271,7 +271,7 @@ export class AchievementBoard {
     row.rewardBg.lineStyle(2, completed ? 0xbff6d3 : 0xf7d58b, 0.26);
     row.rewardBg.fillRoundedRect((BOARD_W / 2) - 120, -25, 100, 22, 11);
     row.rewardBg.strokeRoundedRect((BOARD_W / 2) - 120, -25, 100, 22, 11);
-    row.rewardText.setText(completed ? "Reward paid" : (goal.rewardText || ""));
+    row.rewardText.setText(completed ? `Paid ${goal.rewardText || "reward"}` : (goal.rewardText || ""));
     row.rewardText.setColor(completed ? "#d9ffe4" : "#fff4cf");
 
     row.progressBg.clear();

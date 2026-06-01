@@ -21,7 +21,7 @@ import { Blademaster } from "../../players/Blademaster";
 import { Gunslinger } from "../../players/Gunslinger";
 import { formatPermitCostText } from "../../permitSystem";
 import { hasStoreUnlock, STORE_UNLOCK_KEYS } from "../../parcel_system/StoreUnlockSystem";
-import { getRecruitCost } from "../../balance/GameBalance";
+import { getQuickSellPermitValue, getRecruitCost } from "../../balance/GameBalance";
 import {
   addViewportScrollAffordance,
   BOTTOM_BAR_THEME,
@@ -42,7 +42,6 @@ const SPECIAL_BUILD_PLACERS = {
   catapult: Catapult,
 };
 
-const QUICK_SELL_PERMIT_PRICE = 25;
 const QUICK_SELL_PRIORITY = Object.freeze({
   wood: 10,
   stone: 11,
@@ -344,6 +343,7 @@ export default class BuildTab {
     this._onCardsWheel = null;
     this._onPlacePointerDown = null;
     this._onPlaceEsc = null;
+    this._cardsScrollByMode = { buildings: 0, units: 0 };
 
     ensureBuildTabIcons(scene);
 
@@ -582,15 +582,16 @@ export default class BuildTab {
     const permitCount = Math.max(0, Number(world?.permits || 0));
     const sellablePermits = Math.max(0, permitCount - Math.max(0, Number(reserves.permits || 0)));
     if (remainingShortfall > 0 && sellablePermits > 0) {
-      const amount = Math.min(sellablePermits, Math.ceil(remainingShortfall / QUICK_SELL_PERMIT_PRICE));
+      const permitUnitPrice = getQuickSellPermitValue(world);
+      const amount = Math.min(sellablePermits, Math.ceil(remainingShortfall / permitUnitPrice));
       if (amount > 0) {
-        const revenue = amount * QUICK_SELL_PERMIT_PRICE;
+        const revenue = amount * permitUnitPrice;
         actions.push({
           source: "permits",
           itemName: "permits",
           label: amount === 1 ? "Permit" : "Permits",
           amount,
-          unitPrice: QUICK_SELL_PERMIT_PRICE,
+          unitPrice: permitUnitPrice,
           revenue,
           priority: 1000,
         });
@@ -702,7 +703,8 @@ export default class BuildTab {
         const amount = Math.min(available, Math.max(0, Number(action.amount || 0)));
         if (!(amount > 0)) continue;
         world?.updatePermits?.(-amount);
-        const revenue = amount * QUICK_SELL_PERMIT_PRICE;
+        const unitPrice = Math.max(0, Number(action.unitPrice || getQuickSellPermitValue(world)));
+        const revenue = amount * unitPrice;
         world?.updateMoney?.(revenue, { sourceUiTarget });
         totalRevenue += revenue;
         soldAnything = true;
@@ -728,6 +730,8 @@ export default class BuildTab {
 
   _makeUI() {
     const scene = this.scene;
+    this._rememberCardsScroll();
+    const preservedScrollX = this._getRememberedCardsScroll(this.mode);
 
     this._cardsScrollAffordance?.destroy?.();
     this._cardsScrollAffordance = null;
@@ -841,7 +845,7 @@ export default class BuildTab {
     this._cardsContainer = cardsContainer;
     this._cardsViewport = { left, top, w: viewportW, h: viewportH };
     this._cardsViewportHit = viewportHit;
-    this._cardsScrollX = 0;
+    this._cardsScrollX = preservedScrollX;
     this._cardsContentW = 0;
     this._cardsScrollAffordance = addViewportScrollAffordance(
       scene,
@@ -1119,6 +1123,7 @@ export default class BuildTab {
     if (contentW <= w) {
       this._cardsScrollX = 0;
       this._cardsContainer.x = left;
+      this._rememberCardsScroll();
       return;
     }
 
@@ -1128,6 +1133,18 @@ export default class BuildTab {
 
     this._cardsScrollX = Phaser.Math.Clamp(this._cardsScrollX, minScroll, maxScroll);
     this._cardsContainer.x = left + this._cardsScrollX;
+    this._rememberCardsScroll();
+  }
+
+  _rememberCardsScroll() {
+    if (!this._cardsScrollByMode || !this.mode) return;
+    const value = Number(this._cardsScrollX);
+    this._cardsScrollByMode[this.mode] = Number.isFinite(value) ? value : 0;
+  }
+
+  _getRememberedCardsScroll(mode = this.mode) {
+    const value = Number(this._cardsScrollByMode?.[mode]);
+    return Number.isFinite(value) ? value : 0;
   }
 
   _enableCardScrolling(viewportHit) {
@@ -1184,9 +1201,11 @@ export default class BuildTab {
 
   _setMode(mode) {
     if (this.mode === mode) return;
+    this._rememberCardsScroll();
     this._closeQuickSell();
     this._clearSelection(true);
     this.mode = mode;
+    this._cardsScrollX = this._getRememberedCardsScroll(mode);
     this._makeUI();
   }
 
@@ -1220,9 +1239,16 @@ export default class BuildTab {
 
     if (!Teams.canRecruitPlayer?.(team)) {
       this._closeQuickSell();
-      const message = housing?.homelessCount > 0
-        ? "House your homeless players first"
-        : "Not enough housing";
+      const waitingForTutorialHouse =
+        def?.key === "brawler" &&
+        tutorial?.currentStep?.id === "buy_brawler" &&
+        Math.max(0, Number(housing?.homelessCount || 0)) <= 0 &&
+        this._hasPendingHouseBuild(team);
+      const message = waitingForTutorialHouse
+        ? "Wait until the new house is built before recruiting the Brawler"
+        : housing?.homelessCount > 0
+          ? "House your homeless players first"
+          : "Not enough housing";
       showAlert(this.scene, message, "#ff5555");
       return;
     }
@@ -1261,6 +1287,19 @@ export default class BuildTab {
       key: def.key,
       player,
     });
+  }
+
+  _hasPendingHouseBuild(teamNumber = "1") {
+    const team = Teams.getTeam?.(teamNumber);
+    const isHouseTask = (task) => {
+      const name = task?.type?.name || task?.buildType?.name || task?.tileType?.name;
+      return name === TILE_TYPES.house1.name || name === TILE_TYPES.house2.name;
+    };
+
+    return (
+      (Array.isArray(team?.blockBuildingStates) && team.blockBuildingStates.some(isHouseTask)) ||
+      (Array.isArray(team?.buildingTileStates) && team.buildingTileStates.some(isHouseTask))
+    );
   }
 
   _select(key) {
@@ -1416,7 +1455,7 @@ export default class BuildTab {
         const placedDef = this.pendingDef;
         spendResources(this.scene, costObj);
 
-        buildingManager.queueBlockBuildTask({
+        const queuedTask = buildingManager.queueBlockBuildTask({
           type: tile,
           x: gridX,
           y: gridY,
@@ -1426,6 +1465,10 @@ export default class BuildTab {
           refundCost: { ...costObj },
           prepaid: Object.keys(costObj).length > 0,
         }, 1);
+        if (!queuedTask) {
+          showAlert(this.scene, "Cannot build there", "#ff5555");
+          return;
+        }
         this._clearSelection(true);
         showAlert(this.scene, "Construction started!", "#aaffaa");
         tutorial?.notifyAction?.("build.placed", {

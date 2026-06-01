@@ -46,9 +46,12 @@ const PRESSURE_CLEAR_BONUSES = Object.freeze({
   3: 145,
 });
 
-const GOLD_ORE_BASE_PAYOUT = 40;
+const TOWN_TOWER_BASE_DAWN_INCOME = 250;
+const QUICK_SELL_PERMIT_BASE_VALUE = 100;
+const GOLD_ORE_STAGE_BASE_PAYOUT = 75;
 const GOLD_ORE_DAY_SCALE = 0.05;
 const CONTRACT_DAY_SCALE = 0.10;
+const REWARD_DAY_SCALE = 0.10;
 
 const ENEMY_KILL_REWARDS = Object.freeze({
   raider: 18,
@@ -162,10 +165,28 @@ export function getContractMoneyCost(scene, type, difficulty = 1) {
   return roundPrice(base * dayScale, 5);
 }
 
-export function getGoldOrePayout(scene, richness = 1) {
+export function getDayProgressionScale(scene, rate = REWARD_DAY_SCALE) {
+  return 1 + (Math.max(0, getBalanceDay(scene) - 1) * Math.max(0, Number(rate || 0)));
+}
+
+export function getTownTowerDawnIncome(scene, towerCount = 1) {
+  const towers = Math.max(0, Math.floor(toWholeNumber(towerCount, 0)));
+  return roundPrice(TOWN_TOWER_BASE_DAWN_INCOME * towers * getDayProgressionScale(scene), 5);
+}
+
+export function getQuickSellPermitValue(scene) {
+  return roundPrice(QUICK_SELL_PERMIT_BASE_VALUE * getDayProgressionScale(scene), 5);
+}
+
+export function getGoldOreStagePayout(scene, richness = 1) {
   const dayScale = 1 + (Math.max(0, getBalanceDay(scene) - 1) * GOLD_ORE_DAY_SCALE);
-  const reward = GOLD_ORE_BASE_PAYOUT * Math.max(0.5, Number(richness || 1));
+  const reward = GOLD_ORE_STAGE_BASE_PAYOUT * Math.max(0.5, Number(richness || 1));
   return roundPrice(reward * dayScale, 5);
+}
+
+export function getGoldOrePayout(scene, richness = 1, stages = 3) {
+  const stageCount = Math.max(1, Math.floor(toWholeNumber(stages, 3)));
+  return roundPrice(getGoldOreStagePayout(scene, richness) * stageCount, 5);
 }
 
 export function getPressureClearBonus(scene, difficulty = 1) {
@@ -200,8 +221,7 @@ export function getEnemyKillReward(enemyType = "raider") {
 }
 
 export function getMarketPriceMultiplier(scene) {
-  const day = getBalanceDay(scene);
-  return 1 + (Math.max(0, day - 1) * 0.1) + (getIncomeTier(scene) * 0.05);
+  return 1;
 }
 
 export function buildMarketPriceTable(scene, basePrices = {}, inflationMultipliers = null) {

@@ -670,6 +670,8 @@ export class StorageBuilding {
             this.collider = null;
         }
 
+        buildingManager.clearBlockFootprint?.(this.x, this.y, this.tileType);
+        buildingManager.removeBuildingFromArray?.(this.x, this.y);
         Teams.removeFromStateArray(this.teamNumber, 'storageList', this);
         StorageManager.handleStorageDestroyed?.(this);
 

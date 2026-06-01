@@ -233,7 +233,7 @@ export class Bomber {
     }
 
     static _playExplosionFx(scene, x, y) {
-        AudioManager.playSound?.("sfx_end_stage_explosions");
+        AudioManager.playWorldSound?.("sfx_end_stage_explosions");
         if (scene?.anims?.exists?.("explosions") && scene.textures.exists("explosions")) {
             const fx = scene.add.sprite(x, y, "explosions").setDepth(999).setScale(1.15);
             fx.play("explosions");

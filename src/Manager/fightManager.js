@@ -18,14 +18,27 @@ export class fightManager{
     static lastStandThreshold = 0.35;
     static lastStandDamageMultiplier = 1.2;
 
-    static hasAttackRecovery(sprite) {
-        return !!sprite?._attackRecoveryTimer;
+    static _now(sprite = null) {
+        const scene = sprite?.scene ?? this.scene;
+        return scene?.getSimulationNow?.() ?? scene?.simNowMs ?? scene?.time?.now ?? Date.now();
     }
 
-    static clearAttackRecovery(sprite) {
-        if (!sprite?._attackRecoveryTimer) return;
-        sprite._attackRecoveryTimer.remove(false);
-        sprite._attackRecoveryTimer = null;
+    static hasAttackRecovery(sprite) {
+        if (!sprite) return false;
+        if (sprite._attackRecoveryTimer) return true;
+        const recoveryUntil = Number(sprite._attackRecoveryUntil || 0);
+        return recoveryUntil > this._now(sprite);
+    }
+
+    static clearAttackRecovery(sprite, opts = {}) {
+        if (!sprite) return;
+        if (sprite._attackRecoveryTimer) {
+            sprite._attackRecoveryTimer.remove(false);
+            sprite._attackRecoveryTimer = null;
+        }
+        if (opts.clearCooldown) {
+            sprite._attackRecoveryUntil = 0;
+        }
     }
 
     static clearHitReaction(target, { restoreVisual = false } = {}) {
@@ -59,6 +72,8 @@ export class fightManager{
 
         CombatSpacingCoordinator.clearTroopFocus(sprite);
         Player.resetRoamState(sprite);
+        Player.clearRecentCombatAttacker?.(sprite);
+        Player.clearGunslingerKiteState?.(sprite);
         sprite.track = null;
         sprite.forcedTarget = null;
         sprite.currentPath?.splice?.(0);
@@ -118,6 +133,8 @@ export class fightManager{
                 : slowMultiplier;
             target.moveSlowUntil = Math.max(currentUntil, nextUntil);
         }
+
+        Player.recordRecentCombatAttacker?.(target, attacker);
 
         const attackerIsPlayerFighter =
             attacker?.body?.team === 1 &&
@@ -280,8 +297,11 @@ export class fightManager{
     static _scheduleAttackRecovery(sprite, weapon) {
         if (!sprite?.active || !weapon || this.hasAttackRecovery(sprite)) return;
 
-        sprite._attackRecoveryTimer = sprite.scene.time.delayedCall(weapon.duration, () => {
+        const duration = Math.max(0, Number(weapon.duration || 0));
+        sprite._attackRecoveryUntil = this._now(sprite) + duration;
+        sprite._attackRecoveryTimer = sprite.scene.time.delayedCall(duration, () => {
             sprite._attackRecoveryTimer = null;
+            sprite._attackRecoveryUntil = 0;
             if (!sprite?.active) return;
 
             const currentTracked = sprite.track && sprite.track[0];
@@ -415,7 +435,9 @@ export class fightManager{
             this.checkForKillReward(sprite.body.team, target);
             Player._cleanupCombatTicketForTarget?.(sprite.body.team, target);
             Player.destroyPlayer(target);
-            this.disengageFromCombat(sprite, "combat_target_killed");
+            if (sprite.track?.[0]?.gameObject === target || sprite.forcedTarget === target) {
+                this.disengageFromCombat(sprite, "combat_target_killed");
+            }
             return;
         }
 

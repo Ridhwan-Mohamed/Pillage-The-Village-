@@ -38,6 +38,7 @@ export class TaskBoard {
                 const task = arr[i];
                 if (!task) continue;
                 if (task.canceled) continue;
+                if (map.kind === "build_block" && task.awaitingSiteClear) continue;
                 if (map.kind === "forage" && task.directOrderId) continue;
                 if (map.kind === "forage" && (task.forageType === "block" || task.forageType === "seed")) {
                     const node = task.value;

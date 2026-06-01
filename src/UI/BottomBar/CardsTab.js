@@ -343,7 +343,8 @@ export default class CardsTab {
 
     this._cardsContainer.removeAll(true);
     this._cardRefs = [];
-    this.countText?.setText(`${total} ${total === 1 ? "CARD" : "CARDS"}`);
+    const countLabel = this.mode === "consumables" ? "ITEM" : "CARD";
+    this.countText?.setText(`${total} ${total === 1 ? countLabel : `${countLabel}S`}`);
     this._applyToggleVisuals();
 
     if (!entries.length) {
@@ -425,6 +426,10 @@ export default class CardsTab {
   }
 
   _makeCard(entry, x, y) {
+    if (this.mode === "consumables") {
+      return this._makeConsumableItem(entry, x, y);
+    }
+
     const scene = this.scene;
     const card = entry.card;
     const tint = getCardOutlineTint(card);
@@ -563,7 +568,115 @@ export default class CardsTab {
     return root;
   }
 
-  _applyCardHover(root, bg, tint, hovered, active) {
+  _makeConsumableItem(entry, x, y) {
+    const scene = this.scene;
+    const card = entry.card;
+    const tint = getCardOutlineTint(card);
+    const isPending = this.pendingUseId === card.id;
+    const isArmed = this.armedCardId === card.id;
+    const root = scene.add.container(x, y);
+
+    const accent = isArmed ? 0xffe08a : tint;
+    const bg = makeGlassRoundRect(scene, CARD_W, CARD_H, 14, {
+      fill: mixColor(0x102a20, accent, isPending || isArmed ? 0.22 : 0.12),
+      alpha: isPending || isArmed ? 0.98 : 0.92,
+      stroke: accent,
+      strokeAlpha: isPending || isArmed ? 0.72 : 0.34,
+      strokeWidth: isPending || isArmed ? 3 : 1.5,
+    });
+    const leftBand = scene.add.rectangle(-CARD_W / 2 + 55, 0, 102, CARD_H - 18, 0x071712, 0.42)
+      .setOrigin(0.5)
+      .setStrokeStyle(1.5, accent, 0.18);
+    const iconPlate = scene.add.rectangle(-CARD_W / 2 + 55, -12, 88, 88, 0x071018, 0.62)
+      .setStrokeStyle(2, accent, 0.42);
+    const icon = scene.textures.exists(card.image)
+      ? scene.add.image(-CARD_W / 2 + 55, -12, card.image).setDisplaySize(72, 72)
+      : scene.add.rectangle(-CARD_W / 2 + 55, -12, 66, 66, accent, 0.28);
+    const qtyBadge = makeGlassRoundRect(scene, 56, 24, 10, {
+      fill: mixColor(accent, 0x000000, 0.3),
+      alpha: 0.94,
+      stroke: 0xffffff,
+      strokeAlpha: 0.22,
+    }).setPosition(-CARD_W / 2 + 55, CARD_H / 2 - 28);
+    const qty = makeText(scene, -CARD_W / 2 + 55, CARD_H / 2 - 28, `x${entry.quantity}`, {
+      fontSize: "12px",
+      color: "#fff9df",
+      strokeThickness: 3,
+      originX: 0.5,
+      originY: 0.5,
+    });
+
+    const name = makeText(scene, -CARD_W / 2 + 116, -CARD_H / 2 + 26, card.name, {
+      fontSize: "15px",
+      strokeThickness: 3,
+      wordWrap: { width: CARD_W - 136 },
+      originY: 0,
+    });
+    const body = makeText(scene, -CARD_W / 2 + 116, -CARD_H / 2 + 62, card.text, {
+      fontSize: "10px",
+      color: BOTTOM_BAR_THEME.textSoft,
+      lineSpacing: 2,
+      wordWrap: { width: CARD_W - 136 },
+      originY: 0,
+    });
+
+    const isTargetedStoreItem = TARGETED_STORE_ACTIVATIONS.has(card.activation);
+    const statusText = isArmed ? "TARGETING" : (isTargetedStoreItem ? "TARGET MODE" : "CLICK TO USE");
+    const status = makeText(scene, -CARD_W / 2 + 116, CARD_H / 2 - 24, statusText, {
+      fontSize: "9px",
+      color: isPending || isArmed ? "#fff1b3" : "#bafbd3",
+      originY: 0.5,
+    });
+
+    const cardHit = scene.add.zone(0, 0, CARD_W, CARD_H).setInteractive({ useHandCursor: true });
+    cardHit.on("pointerover", () => {
+      AudioManager.playUiHover?.();
+      this._applyCardHover(root, bg, accent, true, isPending || isArmed, 0x102a20);
+    });
+    cardHit.on("pointerout", () => this._applyCardHover(root, bg, accent, false, isPending || isArmed, 0x102a20));
+    cardHit.on("pointerdown", (_pointer, _lx, _ly, event) => {
+      event?.stopPropagation?.();
+      if (!isTargetedStoreItem) this.armConsumable(entry);
+      else this.armTargetCard(entry);
+    });
+
+    root.add([bg, leftBand, iconPlate, icon, qtyBadge, qty, name, body, status, cardHit]);
+
+    if (isPending) {
+      const veil = scene.add.rectangle(0, 0, CARD_W - 8, CARD_H - 8, 0x02060d, 0.58).setOrigin(0.5);
+      const prompt = makeText(scene, 0, -22, "USE THIS ITEM?", {
+        fontSize: "14px",
+        color: "#fff5cc",
+        stroke: "#02060d",
+        strokeThickness: 3,
+        originX: 0.5,
+        originY: 0.5,
+      });
+      const sub = makeText(scene, 0, -2, "Confirm or cancel", {
+        fontSize: "9px",
+        color: "#d7e9f4",
+        stroke: "#02060d",
+        strokeThickness: 2,
+        originX: 0.5,
+        originY: 0.5,
+      });
+      const confirm = makePillButton(scene, -56, 28, 98, 32, "CONFIRM", {
+        accent: 0x9dffa5,
+        fill: 0x1f5c42,
+        onClick: () => this.confirmConsumable(entry),
+      });
+      const cancel = makePillButton(scene, 58, 28, 82, 32, "CANCEL", {
+        accent: 0xff9fb5,
+        fill: 0x5a2230,
+        onClick: () => this.cancelPending(),
+      });
+      root.add([veil, prompt, sub, confirm, cancel]);
+    }
+
+    return root;
+  }
+
+  _applyCardHover(root, bg, tint, hovered, active, baseFill = BOTTOM_BAR_THEME.cardFill) {
     this.scene.tweens.killTweensOf(root);
     this.scene.tweens.add({
       targets: root,
@@ -572,7 +685,7 @@ export default class CardsTab {
       duration: 120,
       ease: "Quad.easeOut",
     });
-    bg.setFillStyle(mixColor(BOTTOM_BAR_THEME.cardFill, tint, hovered || active ? 0.2 : 0.12), hovered || active ? 0.98 : 0.94);
+    bg.setFillStyle(mixColor(baseFill, tint, hovered || active ? 0.2 : 0.12), hovered || active ? 0.98 : 0.94);
     bg.setStrokeStyle(hovered || active ? 3 : 2, tint, hovered || active ? 0.8 : 0.4);
   }
 

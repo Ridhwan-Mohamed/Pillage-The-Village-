@@ -24,7 +24,8 @@ function snapshotTaskLike(task) {
   if (!task) return null;
   const out = {};
   for (const [key, value] of Object.entries(task)) {
-    if (key === "assigned" || key === "reservedBy") continue;
+    if (key === "assigned" || key === "reservedBy" || key === "directOrderId" || key === "_ephemeralDirect") continue;
+    if (key === "destroyMarker" || key === "destroyWarningX" || key === "destroyWarningXTween") continue;
     if (typeof value === "function") continue;
     if (value && typeof value === "object") {
       if (value.name && !Array.isArray(value) && Object.keys(value).includes("name")) {
@@ -50,6 +51,31 @@ function snapshotTaskLike(task) {
     out[key] = value;
   }
   if (task.type) out.type = getTileTypeKey(task.type);
+  return out;
+}
+
+function snapshotCurrentOrder(order) {
+  if (!order || order.status !== "active" || order.persistent !== true) return null;
+
+  const out = {
+    id: order.id,
+    kind: order.kind,
+    status: "active",
+    source: order.source || "player",
+    persistent: true,
+  };
+
+  if (typeof order.resourceType === "string") out.resourceType = order.resourceType;
+  if (Number.isFinite(Number(order.radiusTiles))) out.radiusTiles = Number(order.radiusTiles);
+  if (Array.isArray(order.nodeKeys)) out.nodeKeys = order.nodeKeys.filter((key) => typeof key === "string");
+  if (order.center && Number.isFinite(Number(order.center.x)) && Number.isFinite(Number(order.center.y))) {
+    out.center = { x: Number(order.center.x), y: Number(order.center.y) };
+  }
+  if (order.anchor && Number.isFinite(Number(order.anchor.x)) && Number.isFinite(Number(order.anchor.y))) {
+    out.anchor = { x: Number(order.anchor.x), y: Number(order.anchor.y) };
+  }
+  if (order.shuttingDown) out.shuttingDown = true;
+
   return out;
 }
 
@@ -148,6 +174,7 @@ function snapshotTroop(troop) {
     maxStamina: Number(troop.maxStamina ?? 0),
     name: troop.name ?? null,
     roam: !!troop.roam,
+    currentOrder: snapshotCurrentOrder(troop.currentOrder),
     carrying: snapshotItemStack(troop.carrying),
     waterBucket: cloneSimple(troop.waterBucket, null),
     sleepQueued: !!troop._sleepQueued,

@@ -30,8 +30,8 @@ export const weapons = {
 
   sword: {
     name: "Sword",
-    baseDmg: 45,
-    critDmg: 85,
+    baseDmg: 38,
+    critDmg: 70,
     critProb: 30,
     accuracy: 90,
     duration: 1000,
@@ -44,8 +44,8 @@ export const weapons = {
 
   pistol: {
     name: "pistol",
-    baseDmg: 100,
-    critDmg: 175,
+    baseDmg: 70,
+    critDmg: 120,
     critProb: 40,
     accuracy: 85,
     duration: 1300,

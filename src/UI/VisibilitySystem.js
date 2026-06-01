@@ -13,8 +13,16 @@ import {
 } from "../constants";
 import { Map as GameMap } from "../map";
 
-function idx(x, y) { return y * WORLD_DIMENSIONX + x; }
-function inBounds(x, y) { return x >= 0 && y >= 0 && x < WORLD_DIMENSIONX && y < WORLD_DIMENSIONY; }
+function currentMapWidth() {
+  return Math.max(1, GameMap.grid?.[0]?.length || WORLD_DIMENSIONX);
+}
+
+function currentMapHeight() {
+  return Math.max(1, GameMap.grid?.length || WORLD_DIMENSIONY);
+}
+
+function idx(x, y) { return y * VisibilitySystem._mapW + x; }
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < VisibilitySystem._mapW && y < VisibilitySystem._mapH; }
 
 export class VisibilitySystem {
   /** Phaser.Scene */
@@ -35,6 +43,9 @@ export class VisibilitySystem {
   static viewRect = null;         // {gx0, gy0, tilesW, tilesH}
   static viewRT = null;
   static overviewMode = false;
+  static _mapW = WORLD_DIMENSIONX;
+  static _mapH = WORLD_DIMENSIONY;
+  static ambientTintColor = 0x020716;
 
   // --- UI cam opt-out ---
   static uiCam = null;
@@ -52,7 +63,7 @@ export class VisibilitySystem {
   }
 
   // --- tunables ---
-  static useOcclusion = true;
+  static useOcclusion = false;
   static dayCutoff = 1; // >= this = daytime (everything visible)
 
   // Discrete occlusion rings; >=4 → black
@@ -107,12 +118,7 @@ export class VisibilitySystem {
 
     this.scene = scene;
 
-    const N = WORLD_DIMENSIONX * WORLD_DIMENSIONY;
-    this.blockerGrid   = new Uint8Array(N);
-    this.occlusionGrid = new Float32Array(N);
-
-    this._buildInitialBlockers();
-    this._recomputeAllOcclusion();
+    this._ensureLogicGrids(true);
 
     this._resizeHandler = () => {
       if (!this.requestedViewRect) return;
@@ -152,12 +158,40 @@ export class VisibilitySystem {
     this._fog = new Float32Array(0);
     this._light = new Float32Array(0);
     this._cap = 0;
+    this._mapW = WORLD_DIMENSIONX;
+    this._mapH = WORLD_DIMENSIONY;
+    this.ambientTintColor = 0x020716;
   }
 
   // ===== Public API =====
 
+  static _ensureLogicGrids(forceRebuild = false) {
+    const width = currentMapWidth();
+    const height = currentMapHeight();
+    const N = width * height;
+    const needsRebuild =
+      forceRebuild ||
+      width !== this._mapW ||
+      height !== this._mapH ||
+      !this.blockerGrid ||
+      this.blockerGrid.length !== N ||
+      !this.occlusionGrid ||
+      this.occlusionGrid.length !== N;
+
+    if (!needsRebuild) return false;
+
+    this._mapW = width;
+    this._mapH = height;
+    this.blockerGrid = new Uint8Array(N);
+    this.occlusionGrid = new Float32Array(N);
+    this._buildInitialBlockers();
+    this._recomputeAllOcclusion();
+    return true;
+  }
+
   // Called by your map reDraw: define current view rect (tile coords)
   static setViewRect(gx0, gy0, tilesW, tilesH) {
+    this._ensureLogicGrids();
     this.requestedViewRect = { gx0, gy0, tilesW, tilesH };
     this.viewRect = this._applyShellPadding(this.requestedViewRect);
     this._ensureViewRT();
@@ -165,11 +199,15 @@ export class VisibilitySystem {
   }
 
   // Ambient change → rebuild full mask
-  static setAmbient(value01) {
+  static setAmbient(value01, tintColor = null) {
     const v = Phaser.Math.Clamp(value01, 0, 1);
-    if(Math.abs(v-this.ambient) < 0.05) return;
-    if (v === this.ambient && this.viewRT) return;
+    const nextTint = tintColor != null && Number.isFinite(Number(tintColor)) ? Number(tintColor) : this.ambientTintColor;
+    const tintChanged = nextTint !== this.ambientTintColor;
+    if (!tintChanged && Math.abs(v-this.ambient) < 0.05) return;
+    if (!tintChanged && v === this.ambient && this.viewRT) return;
     this.ambient = v;
+    this.ambientTintColor = nextTint;
+    GameMap.setOuterWaterAmbience?.(v, nextTint);
     this._rebuildViewFull();
   }
 
@@ -285,14 +323,12 @@ export class VisibilitySystem {
     const miny = Math.min(gy0, gy1);
     const maxy = Math.max(gy0, gy1);
 
-    const inside = (s) =>
-      s &&
-      Number.isFinite(s.x) &&
-      Number.isFinite(s.y) &&
-      s.x >= minx &&
-      s.x <= maxx &&
-      s.y >= miny &&
-      s.y <= maxy;
+    const inside = (s) => {
+      if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y)) return false;
+      const sx = Math.floor(s.x);
+      const sy = Math.floor(s.y);
+      return sx >= minx && sx <= maxx && sy >= miny && sy <= maxy;
+    };
 
     const removedLightIds = new Set();
     const removedVisionIds = new Set();
@@ -360,18 +396,22 @@ export class VisibilitySystem {
 
   // Occluder (e.g., pine/rock) edits → recompute occlusion near change, then full repaint
   static onOccluderChangedRect(gx, gy, wTiles, hTiles, isBlock) {
+    this._ensureLogicGrids();
+    const mapW = this._mapW;
+    const mapH = this._mapH;
     const x0 = Math.max(0, gx);
     const y0 = Math.max(0, gy);
-    const x1 = Math.min(WORLD_DIMENSIONX - 1, gx + wTiles - 1);
-    const y1 = Math.min(WORLD_DIMENSIONY - 1, gy + hTiles - 1);
+    const x1 = Math.min(mapW - 1, gx + wTiles - 1);
+    const y1 = Math.min(mapH - 1, gy + hTiles - 1);
+    if (x1 < x0 || y1 < y0) return;
 
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++)
       this.blockerGrid[idx(x, y)] = isBlock ? 1 : 0;
 
     const pad = 12;
     const ax0 = Math.max(0, x0 - pad), ay0 = Math.max(0, y0 - pad);
-    const ax1 = Math.min(WORLD_DIMENSIONX - 1, x1 + pad);
-    const ay1 = Math.min(WORLD_DIMENSIONY - 1, y1 + pad);
+    const ax1 = Math.min(mapW - 1, x1 + pad);
+    const ay1 = Math.min(mapH - 1, y1 + pad);
     this._floodExteriorToOcclusion(ax0, ay0, ax1, ay1);
 
     this._rebuildViewFull();
@@ -482,31 +522,13 @@ export class VisibilitySystem {
   /** Full rebuild of the current view */
   static _rebuildViewFull() {
     if (!this.viewRect) return;
+    this._ensureLogicGrids();
     this._ensureViewRT();
     if (!this.viewRT) return;
 
-    // ✅ Daytime fast-path: ONLY occlusion (no fog, no lights, no vision)
+    // Daytime fast-path: fully clear; blocker occlusion no longer affects rendering.
     if (this.ambient >= this.dayCutoff) {
-      const { gx0, gy0, tilesW, tilesH } = this.viewRect;
-      const rt = this.viewRT;
-      rt.clear();
-
-      const gfx = this.scene.add.graphics();
-      for (let ly = 0; ly < tilesH; ly++) {
-        const gy = gy0 + ly;
-        for (let lx = 0; lx < tilesW; lx++) {
-          const gx = gx0 + lx;
-          const O = inBounds(gx, gy) ? (this.occlusionGrid[idx(gx, gy)] || 0) : 0; // 0..1
-          // shade=1 when no occlusion; shade < 1 under occluders/interior
-          const shade = Phaser.Math.Linear(1.0, this.occlusionMinShade, O);
-          const finalDark = 1 - shade;                   // only occlusion contributes
-          if (finalDark <= 0) continue;
-          gfx.fillStyle(0x000000, finalDark);
-          gfx.fillRect(lx, ly, 1, 1);
-        }
-      }
-      rt.draw(gfx, 0, 0);
-      gfx.destroy();
+      this.viewRT.clear();
       return;
     }
 
@@ -598,25 +620,22 @@ export class VisibilitySystem {
       }
     }
 
-    // 3) Draw final darkness (max(vision, light) then occlusion)
+    // 3) Draw final darkness from ambient, vision, and lights only.
     const gfx = this.scene.add.graphics();
     for (let ly = 0; ly < tilesH; ly++) {
       const rowOff = ly * tilesW;
       for (let lx = 0; lx < tilesW; lx++) {
-        const j  = rowOff + lx;
-        const gx = gx0 + lx, gy = gy0 + ly;
+        const gx = gx0 + lx;
+        const gy = gy0 + ly;
+        if (!inBounds(gx, gy)) continue;
 
-        let vis = Math.max(this._fog[j], this._light[j]); // brightness
-        if (this.useOcclusion) {
-          const O = inBounds(gx, gy) ? (this.occlusionGrid[idx(gx, gy)] || 0) : 0;
-          const shade = Phaser.Math.Linear(1.0, this.occlusionMinShade, O);
-          vis *= shade;
-        }
+        const j  = rowOff + lx;
+        const vis = Math.max(this._fog[j], this._light[j]); // brightness
         const finalDark = 1 - Phaser.Math.Clamp(vis, 0, 1);
         if (finalDark <= 0) continue;
 
         // NOTE: 1x1 grid pixel; RT is scaled to world size
-        gfx.fillStyle(0x000000, finalDark);
+        gfx.fillStyle(this.ambientTintColor, finalDark);
         gfx.fillRect(lx, ly, 1, 1);
       }
     }
@@ -629,9 +648,11 @@ export class VisibilitySystem {
   static _buildInitialBlockers() {
     const grid = GameMap.grid;
     if (!grid) return;
-    for (let y = 0; y < WORLD_DIMENSIONY; y++) {
-      for (let x = 0; x < WORLD_DIMENSIONX; x++) {
-        const code = GameMap.grabDepth(grid[y][x], BLOCKDEPTH);
+    for (let y = 0; y < this._mapH; y++) {
+      for (let x = 0; x < this._mapW; x++) {
+        const cell = grid[y]?.[x];
+        if (cell == null) continue;
+        const code = GameMap.grabDepth(cell, BLOCKDEPTH);
         const name = TILE_TYPES[TILE_MAP(code)]?.name;
         this.blockerGrid[idx(x, y)] = (name === "pine" || name === "rock") ? 1 : 0;
       }
@@ -639,11 +660,12 @@ export class VisibilitySystem {
   }
 
   static _recomputeAllOcclusion() {
-    this._floodExteriorToOcclusion(0, 0, WORLD_DIMENSIONX - 1, WORLD_DIMENSIONY - 1);
+    this._floodExteriorToOcclusion(0, 0, this._mapW - 1, this._mapH - 1);
   }
 
   /** Exterior flood within AABB; writes occlusionGrid using discrete blocker depths. */
   static _floodExteriorToOcclusion(x0, y0, x1, y1) {
+    if (x1 < x0 || y1 < y0) return;
     const W = x1 - x0 + 1, H = y1 - y0 + 1;
     const idxLocal = (x, y) => (y - y0) * W + (x - x0);
     const inLocal = (x, y) => x >= x0 && y >= y0 && x <= x1 && y <= y1;
@@ -658,12 +680,16 @@ export class VisibilitySystem {
     const pop  = ()=>[qx[qs], qy[qs++]];
 
     for (let x = x0; x <= x1; x++) {
-      if (!this.blockerGrid[idx(x, y0)]) { mark[idxLocal(x, y0)] = 1; push(x, y0, 0); }
-      if (!this.blockerGrid[idx(x, y1)]) { mark[idxLocal(x, y1)] = 1; push(x, y1, 0); }
+      const top = idxLocal(x, y0);
+      const bottom = idxLocal(x, y1);
+      if (!this.blockerGrid[idx(x, y0)] && !mark[top]) { mark[top] = 1; push(x, y0, 0); }
+      if (!this.blockerGrid[idx(x, y1)] && !mark[bottom]) { mark[bottom] = 1; push(x, y1, 0); }
     }
     for (let y = y0; y <= y1; y++) {
-      if (!this.blockerGrid[idx(x0, y)]) { mark[idxLocal(x0, y)] = 1; push(x0, y, 0); }
-      if (!this.blockerGrid[idx(x1, y)]) { mark[idxLocal(x1, y)] = 1; push(x1, y, 0); }
+      const left = idxLocal(x0, y);
+      const right = idxLocal(x1, y);
+      if (!this.blockerGrid[idx(x0, y)] && !mark[left]) { mark[left] = 1; push(x0, y, 0); }
+      if (!this.blockerGrid[idx(x1, y)] && !mark[right]) { mark[right] = 1; push(x1, y, 0); }
     }
     while (qs < qe) {
       const [cx, cy] = pop();

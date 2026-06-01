@@ -24,7 +24,7 @@ import gunslingerSwimSidewards from 'url:../assets/players/gunslinger/gunslinger
 
 export class Gunslinger {
 
-    static speed = 90;
+    static speed = 70;
     static stamina = 0.01;
 
     static preload(scene) {

@@ -71,6 +71,14 @@ export class Player {
     static IDLE_EMOTE_COOLDOWN_MS = 11000;
     static TIRED_EMOTE_COOLDOWN_MS = 9000;
     static TIRED_STAMINA_RATIO = 0.26;
+    static FIGHTER_CLOSE_THREAT_RADIUS = SQUARESIZE * 2;
+    static FIGHTER_RECENT_ATTACKER_MS = 3200;
+    static FIGHTER_TARGET_STICKY_MS = 1400;
+    static FIGHTER_SPREAD_MAX_EXTRA_DISTANCE = SQUARESIZE * 4;
+    static FIGHTER_SPREAD_MAX_RATIO = 1.8;
+    static GUNSLINGER_DANGER_RADIUS = SQUARESIZE * 4;
+    static GUNSLINGER_KITE_REPATH_COOLDOWN_MS = 240;
+    static GUNSLINGER_KITE_DEST_EPSILON = SQUARESIZE * 0.55;
 
     static resetRuntimeState(scene = null) {
         this.scene = scene ?? null;
@@ -136,9 +144,12 @@ export class Player {
         const state = player.state;
         fightManager.clearAttackRecovery(player);
         fightManager.clearHitReaction(player);
+        this.clearRecentCombatAttacker(player);
+        this.clearGunslingerKiteState(player);
         this._playDeathAnimation(player);
         this._clearStatusEmote(player);
         this._removePlayerFromHouse(player);
+        this._dropTargetingAgainstUnit(player);
 
         // Call the troop-specific destroy logic if defined
         if (typeof player.destroySelf === 'function') {
@@ -537,6 +548,9 @@ export class Player {
             if (troop._raiderRetaliationTarget === targetTroop) {
                 troop._raiderRetaliationTarget = null;
             }
+            if (troop._recentCombatAttacker === targetTroop) {
+                this.clearRecentCombatAttacker(troop);
+            }
 
             const forced = troop.forcedTarget === targetTroop;
             const tracked = troop.track?.[0]?.gameObject === targetTroop;
@@ -706,7 +720,7 @@ export class Player {
 
     static moveTo(troop, path) {
         const {navMesh, navGrid} = this._getNavForTroop(troop);
-        if (!path || path.length === 0) {
+        if (!Array.isArray(path) || path.length === 0) {
             // Raiders: if a POI is blocked, convert to siege instead of clearing task.
             if (troop.body?.team === 0 && typeof troop.tryBeginSiege === "function") {
                 const didSiege = troop.tryBeginSiege();
@@ -722,9 +736,39 @@ export class Player {
             return false;
         }
 
-        troop.currentPath = path;
-        troop.finalPos = path[path.length - 1];
-        troop.currentPath.shift();
+        troop.currentPath = path.filter(point =>
+            point &&
+            Number.isFinite(point.x) &&
+            Number.isFinite(point.y)
+        );
+
+        if (!troop.currentPath.length) {
+            console.log("No path found or path is empty.");
+            if (troop.task) {
+                this._releaseTaskAssignment(troop);
+                Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
+                PathRegistry.unregisterUnit(navMesh, troop);
+            }
+            return false;
+        }
+
+        troop.finalPos = troop.currentPath[troop.currentPath.length - 1];
+
+        const firstPoint = troop.currentPath[0];
+        const distToFirst = Phaser.Math.Distance.Between(troop.x, troop.y, firstPoint.x, firstPoint.y);
+        if (distToFirst <= this._getPathArrivalRadius(troop)) {
+            troop.currentPath.shift();
+        }
+
+        if (troop.currentPath.length === 0) {
+            CombatSpacingCoordinator.clearRoamReservation(troop);
+            troop.__pendingPolyIds = [];
+            troop.body?.setVelocity?.(0, 0);
+            this._snapTroopToPoint(troop, troop.finalPos);
+            PathDebugDrawer.onPathEnd(troop);
+            this.doAction(troop);
+            return true;
+        }
 
         PathDebugDrawer.onNewPath(troop);
 
@@ -769,6 +813,83 @@ export class Player {
         const tx = Math.floor(worldX / SQUARESIZE);
         const ty = Math.floor(worldY / SQUARESIZE);
         return navGrid?.[ty]?.[tx] === 1;
+    }
+
+    static _regionCheckPointForTroop(troop, worldX = troop?.x, worldY = troop?.y) {
+        const { navGrid } = this._getNavForTroop(troop);
+        if (!Array.isArray(navGrid) || !Number.isFinite(worldX) || !Number.isFinite(worldY)) {
+            return null;
+        }
+
+        const tx = Math.floor(worldX / SQUARESIZE);
+        const ty = Math.floor(worldY / SQUARESIZE);
+        const toCenter = (x, y) => ({
+            x: x * SQUARESIZE + SQUARESIZE / 2,
+            y: y * SQUARESIZE + SQUARESIZE / 2,
+            tx: x,
+            ty: y,
+        });
+
+        if (navGrid?.[ty]?.[tx] === 1) {
+            return toCenter(tx, ty);
+        }
+
+        let best = null;
+        let bestDist = Infinity;
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = tx + dx;
+                const ny = ty + dy;
+                if (navGrid?.[ny]?.[nx] !== 1) continue;
+                const center = toCenter(nx, ny);
+                const dist = Phaser.Math.Distance.Between(worldX, worldY, center.x, center.y);
+                if (dist < bestDist) {
+                    best = center;
+                    bestDist = dist;
+                }
+            }
+        }
+
+        return bestDist <= SQUARESIZE * 0.8 ? best : null;
+    }
+
+    static _hasLiveNavPathForTroop(troop, fromPoint, toPoint) {
+        const { navMesh } = this._getNavForTroop(troop);
+        if (!navMesh?.findPathDetailed || !fromPoint || !toPoint) return false;
+        const result = navMesh.findPathDetailed(
+            { x: fromPoint.x, y: fromPoint.y },
+            { x: toPoint.x, y: toPoint.y },
+            { includePolys: false }
+        );
+        return !!result?.points?.length;
+    }
+
+    static _canReachWorldForTroop(troop, targetWorldX, targetWorldY) {
+        if (!troop?.active || !troop?.body) return false;
+
+        const regionSystem = troop.body.team === 0 ? Map.enemyRegionSystem : Map.regionSystem;
+        if (!regionSystem) return true;
+
+        regionSystem.ensureUpToDate?.();
+        const fromPoint = this._regionCheckPointForTroop(troop, troop.x, troop.y);
+        const toPoint = this._regionCheckPointForTroop(troop, targetWorldX, targetWorldY);
+        if (!fromPoint || !toPoint) return false;
+
+        const fromRegion = regionSystem.getRegionIdForWorldPoint?.(fromPoint.x, fromPoint.y);
+        const toRegion = regionSystem.getRegionIdForWorldPoint?.(toPoint.x, toPoint.y);
+
+        if (
+            Number.isFinite(fromRegion) &&
+            Number.isFinite(toRegion) &&
+            fromRegion >= 0 &&
+            toRegion >= 0
+        ) {
+            if (fromRegion === toRegion) return true;
+            return this._hasLiveNavPathForTroop(troop, fromPoint, toPoint);
+        }
+
+        return this._hasLiveNavPathForTroop(troop, fromPoint, toPoint);
     }
 
     static _pathSegmentBlockedForTroop(troop, nextPoint) {
@@ -868,6 +989,10 @@ export class Player {
     static _normalizeIdleMovementState(troop) {
         if (!troop?.active) return;
 
+        if (this._recoverStalledStorageDelivery(troop)) {
+            return;
+        }
+
         const idleNoMotion =
             !troop.currentPath?.length &&
             !troop.task &&
@@ -905,6 +1030,73 @@ export class Player {
         ) {
             this.resetRoamState(troop);
         }
+    }
+
+    static _recoverStalledStorageDelivery(troop) {
+        const task = troop?.task;
+        if (!troop?.active || !troop?.body) return false;
+        if (troop._returnSwimActive === true) return false;
+        if (troop.state !== CONTROL_STATES.SEND_TO_STORAGE) return false;
+        if (task?.taskType !== "storageDelivery") return false;
+        if (troop.timer || troop.currentPath?.length) return false;
+        if (!this._worldTileIsWalkableForTroop(troop, troop.x, troop.y)) return false;
+
+        if (StorageManager.isCarrying(troop) && this._repathCurrentTaskToApproach(troop, CONTROL_STATES.SEND_TO_STORAGE)) {
+            return true;
+        }
+
+        const teamNumber = troop.body.team;
+        const directOrderId = task.directOrderId ?? troop.carryingDirectOrderId ?? null;
+        this._releaseTaskAssignment(troop);
+        troop.currentPath?.splice?.(0);
+        troop.finalPos = null;
+        troop.body?.setVelocity?.(0, 0);
+        Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
+        StorageManager.pruneTeamDeliveryTasks?.(teamNumber);
+
+        if (!StorageManager.isCarrying(troop)) {
+            return true;
+        }
+
+        if (directOrderId != null && troop.carryingDirectOrderId == null) {
+            troop.carryingDirectOrderId = directOrderId;
+        }
+
+        const reassigned = StorageManager.tryCreateStorageDeliveryTask(troop);
+        if (!reassigned) {
+            StorageManager.pruneTeamDeliveryTasks?.(teamNumber);
+        }
+        return true;
+    }
+
+    static _taskRepathState(troop) {
+        return troop?.taskMeta?.state ?? troop?.state ?? null;
+    }
+
+    static _repathCurrentTaskToApproach(troop, stateOverride = null) {
+        const task = troop?.task;
+        const state = stateOverride ?? this._taskRepathState(troop);
+        if (!troop?.active || !task || state == null) return false;
+        if (!Number.isFinite(Number(task.x)) || !Number.isFinite(Number(task.y))) return false;
+
+        if (troop.state !== state) {
+            Teams.movePlayerState(troop, state);
+        }
+
+        if (Manager.buildType?.(state)) {
+            if (!task.type) return false;
+            const approachTile = Manager._resolveApproachTileForTask?.(troop, task, state);
+            if (!approachTile?.path?.length) return false;
+
+            troop.destX = approachTile.tx;
+            troop.destY = approachTile.ty;
+            if (approachTile.polyIds?.length) troop.__pendingPolyIds = approachTile.polyIds;
+            return this.moveTo(troop, approachTile.path);
+        }
+
+        const path = this.pathTo(troop, task.x, task.y, true);
+        if (!path?.length) return false;
+        return this.moveTo(troop, path);
     }
 
     static _getPathArrivalRadius(sprite, currentSpeed = null) {
@@ -1071,14 +1263,18 @@ export class Player {
                 null;
 
             if (attackTarget && this._isAttackReady(sprite, attackTarget)) {
-                sprite.body.setVelocity(0, 0);
-                if (sprite.currentPath && sprite.currentPath.length) sprite.currentPath.length = 0;
-                sprite.finalPos = null;
-                Teams.movePlayerState(sprite, CONTROL_STATES.ATTACK_MODE);
-                this.doAction(sprite);
-                return;
+                if (sprite.isGunslinger && sprite._gunslingerKiting && sprite.currentPath?.length) {
+                    fightManager.attack(sprite);
+                } else {
+                    this.clearGunslingerKiteState(sprite);
+                    sprite.body.setVelocity(0, 0);
+                    if (sprite.currentPath && sprite.currentPath.length) sprite.currentPath.length = 0;
+                    sprite.finalPos = null;
+                    Teams.movePlayerState(sprite, CONTROL_STATES.ATTACK_MODE);
+                    this.doAction(sprite);
+                    return;
+                }
             }
-
         }
 
         // 2) If we aren't walking anywhere, just idle.
@@ -1217,7 +1413,24 @@ export class Player {
             desired.y
         );
         sprite.body.setVelocity(newVelocity.x, newVelocity.y);
-        updateDirectionalAnimationFromVelocity(sprite, newVelocity.x, newVelocity.y, true);
+
+        let faceVx = newVelocity.x;
+        let faceVy = newVelocity.y;
+        if (sprite.isGunslinger && sprite._gunslingerKiting) {
+            const kiteTarget =
+                (sprite.forcedTarget?.active && sprite.forcedTarget) ||
+                sprite.track?.[0]?.gameObject ||
+                null;
+            if (kiteTarget?.active) {
+                faceVx = kiteTarget.x - sprite.x;
+                faceVy = kiteTarget.y - sprite.y;
+            } else {
+                faceVx = -newVelocity.x;
+                faceVy = -newVelocity.y;
+            }
+        }
+
+        updateDirectionalAnimationFromVelocity(sprite, faceVx, faceVy, true);
         AudioManager.tryPlayStep(sprite);
         // Rotate the sprite to face the direction of movement
         if (newVelocity.length() > 0 && !shouldUseDirectionalFacing(sprite)) {
@@ -1413,6 +1626,8 @@ export class Player {
         // Release any currently claimed job through the centralized task interrupt flow.
         // This keeps TaskBoard/assigned counters consistent with the new system.
         InterruptController.interruptTroop(chosen, "manual_attack_assignment", CONTROL_STATES.TRACK_MODE);
+        this.clearRecentCombatAttacker(chosen);
+        this.clearGunslingerKiteState(chosen);
 
         // 🔒 Mark this as a “hard assignment” target
         chosen.forcedTarget = targetSprite;
@@ -1449,6 +1664,7 @@ export class Player {
             targetSprite.body,
             { x: targetSprite.x, y: targetSprite.y }
         ];
+        this._markCombatTargetSticky(chosen, targetSprite, this.FIGHTER_TARGET_STICKY_MS * 1.5);
 
         // Go into chase mode
         Teams.movePlayerState(chosen, CONTROL_STATES.TRACK_TARGET);
@@ -1461,11 +1677,12 @@ export class Player {
         let mostClosest = null;
         let shortestDistance = Infinity;
         let search = !troop.forcedTarget; //always check for optimal enemy
-        const regionSystem = troop.body.team === 0 ? Map.enemyRegionSystem : Map.regionSystem;
         const canReachTarget = (body) => {
             if (!body) return false;
-            if (!regionSystem?.canReachWorldToWorld) return true;
-            return regionSystem.canReachWorldToWorld(troop.x, troop.y, body.x, body.y);
+            const go = body.gameObject;
+            const targetX = Number.isFinite(go?.x) ? go.x : body.x;
+            const targetY = Number.isFinite(go?.y) ? go.y : body.y;
+            return Player._canReachWorldForTroop(troop, targetX, targetY);
         };
         // troop.state == CONTROL_STATES.TRACK_TARGET ? search = false : search = true;
         if(search){
@@ -1479,10 +1696,30 @@ export class Player {
                 candidates.push(target);
             });
 
-            const bestTarget = CombatSpacingCoordinator.chooseBestEnemyTarget(troop, candidates, {
-                currentTarget: troop.track?.[0]?.gameObject ?? null,
-                strictTargetSpread: troop.body?.team === 1 && Player._isFighterUnit?.(troop),
-            });
+            const recentAttacker = troop.body?.team === 1 && Player._isFighterUnit?.(troop)
+                ? this._getRecentCombatAttacker(troop)
+                : null;
+            if (recentAttacker?.body && !candidates.includes(recentAttacker) && canReachTarget(recentAttacker.body)) {
+                candidates.push(recentAttacker);
+            }
+
+            const currentTarget = troop.track?.[0]?.gameObject ?? null;
+            let bestTarget = null;
+            if (troop.body?.team === 1 && Player._isFighterUnit?.(troop)) {
+                bestTarget = troop.isGunslinger
+                    ? this._chooseGunslingerCombatTarget(troop, candidates, { currentTarget })
+                    : this._chooseImmediateFighterTarget(troop, candidates, currentTarget);
+            }
+
+            if (!bestTarget) {
+                bestTarget = CombatSpacingCoordinator.chooseBestEnemyTarget(troop, candidates, {
+                    currentTarget,
+                    strictTargetSpread: troop.body?.team === 1 && Player._isFighterUnit?.(troop),
+                    strictTargetSpreadMaxExtraDistance: this.FIGHTER_SPREAD_MAX_EXTRA_DISTANCE,
+                    strictTargetSpreadMaxRatio: this.FIGHTER_SPREAD_MAX_RATIO,
+                    keepFocusWeight: troop.body?.team === 1 && Player._isFighterUnit?.(troop) ? 8 : 1.5,
+                });
+            }
 
             if (bestTarget?.body) {
                 mostClosest = bestTarget.body;
@@ -1539,6 +1776,7 @@ export class Player {
                     y: go.y
                 }
             ];
+            this._markCombatTargetSticky(troop, go);
 
             return true;
         }
@@ -1958,7 +2196,11 @@ export class Player {
     }
 
     // Keep ranged units at comfortable distance (max range) while still in line of sight.
-    static computeKiteDestination(troop, target, weapon) {
+    static computeKiteDestination(troop, target, weapon, enemies = null) {
+        if (troop?.isGunslinger) {
+            return this._computeGunslingerKiteDestination(troop, target, weapon, enemies);
+        }
+
         if (!target) return null;
         const range = weapon.range || 150;
 
@@ -1985,6 +2227,159 @@ export class Player {
         return { x: destX, y: destY };
     }
 
+    static clearGunslingerKiteState(troop) {
+        if (!troop) return;
+        troop._gunslingerKiting = false;
+        troop._gunslingerKiteDest = null;
+        troop._gunslingerKiteNextRepathAt = 0;
+    }
+
+    static _getKiteThreatCandidates(troop, enemies = null) {
+        if (Array.isArray(enemies)) return enemies;
+        const enemyTeam = troop?.body?.team === 1 ? "0" : "1";
+        return Teams.teamLists?.[enemyTeam]?.playerList || [];
+    }
+
+    static _hasLineOfSightFromPoint(troop, target, x, y) {
+        if (!target?.active) return false;
+        const probe = Object.create(troop || null);
+        probe.x = x;
+        probe.y = y;
+        probe.body = troop?.body;
+        return Projectile.hasLineOfSight(probe, target);
+    }
+
+    static _computeGunslingerKiteDestination(troop, target, weapon, enemies = null) {
+        if (!troop?.active || !target?.active || !weapon) return null;
+
+        const dangerRadius = Math.max(this.GUNSLINGER_DANGER_RADIUS, Number(weapon.range || 0) * 0.55);
+        const threats = this._getKiteThreatCandidates(troop, enemies)
+            .filter(enemy =>
+                this._isEnemyCandidateForTroop(troop, enemy) &&
+                this._combatDistance(troop, enemy) <= dangerRadius
+            );
+
+        if (!threats.length) {
+            this.clearGunslingerKiteState(troop);
+            return null;
+        }
+
+        let pressureX = 0;
+        let pressureY = 0;
+        for (const enemy of threats) {
+            const dx = troop.x - enemy.x;
+            const dy = troop.y - enemy.y;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            const closeness = Math.max(0, (dangerRadius - dist) / dangerRadius);
+            const weight = 0.25 + closeness * closeness * 2.75;
+            pressureX += (dx / dist) * weight;
+            pressureY += (dy / dist) * weight;
+        }
+
+        if (Math.hypot(pressureX, pressureY) < 0.001 && target) {
+            const dx = troop.x - target.x;
+            const dy = troop.y - target.y;
+            const dist = Math.max(1, Math.hypot(dx, dy));
+            pressureX = dx / dist;
+            pressureY = dy / dist;
+        }
+
+        const baseAngle = Math.atan2(pressureY, pressureX);
+        const offsets = [0, -Math.PI / 6, Math.PI / 6, -Math.PI / 3, Math.PI / 3, -Math.PI / 2, Math.PI / 2, Math.PI];
+        const steps = [SQUARESIZE * 1.5, SQUARESIZE * 2.4, SQUARESIZE * 3.2];
+        const range = Math.max(1, Number(weapon.range || 1));
+        const desiredTargetDist = range * 0.82;
+
+        let best = null;
+        let bestScore = Infinity;
+        const currentDest = troop._gunslingerKiteDest;
+
+        for (const step of steps) {
+            for (const offset of offsets) {
+                const angle = baseAngle + offset;
+                const candidate = {
+                    x: troop.x + Math.cos(angle) * step,
+                    y: troop.y + Math.sin(angle) * step,
+                };
+
+                if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
+                if (!this._worldTileIsWalkableForTroop(troop, candidate.x, candidate.y)) continue;
+                if (!this._canReachWorldForTroop(troop, candidate.x, candidate.y)) continue;
+
+                const targetDist = this._combatDistance(candidate, target);
+                const keepsRange = targetDist <= range;
+                const keepsLos = keepsRange && this._hasLineOfSightFromPoint(troop, target, candidate.x, candidate.y);
+                let closePenalty = 0;
+                let minThreatDist = Infinity;
+
+                for (const enemy of threats) {
+                    const dist = this._combatDistance(candidate, enemy);
+                    minThreatDist = Math.min(minThreatDist, dist);
+                    const danger = Math.max(0, dangerRadius - dist);
+                    closePenalty += danger * danger;
+                }
+
+                const currentDestBonus = currentDest && this._combatDistance(candidate, currentDest) <= this.GUNSLINGER_KITE_DEST_EPSILON
+                    ? -SQUARESIZE * 2
+                    : 0;
+                const losPenalty = keepsLos ? 0 : 200000;
+                const rangePenalty = keepsRange ? 0 : 80000 + Math.max(0, targetDist - range) * 600;
+                const targetBandPenalty = Math.abs(targetDist - desiredTargetDist) * 1.8;
+                const travelPenalty = this._combatDistance(troop, candidate) * 0.45;
+                const safetyBonus = -Math.min(minThreatDist, dangerRadius * 1.5) * 3;
+
+                const score =
+                    closePenalty * 3.5 +
+                    losPenalty +
+                    rangePenalty +
+                    targetBandPenalty +
+                    travelPenalty +
+                    safetyBonus +
+                    currentDestBonus;
+
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    static _tryGunslingerKite(troop, target, enemies = null) {
+        if (!troop?.isGunslinger || !target?.active || !troop.weapon) return false;
+
+        const kiteDest = this.computeKiteDestination(troop, target, troop.weapon, enemies);
+        if (!kiteDest) return false;
+
+        const now = this._sceneNowMs(troop);
+        const previousDest = troop._gunslingerKiteDest;
+        const sameDest = previousDest &&
+            this._combatDistance(previousDest, kiteDest) <= this.GUNSLINGER_KITE_DEST_EPSILON;
+
+        if (
+            troop._gunslingerKiting &&
+            troop.currentPath?.length &&
+            sameDest &&
+            now < Number(troop._gunslingerKiteNextRepathAt || 0)
+        ) {
+            if (this._isAttackReady(troop, target)) fightManager.attack(troop);
+            return true;
+        }
+
+        const path = Player.pathTo(troop, kiteDest.x, kiteDest.y, false);
+        if (!path?.length) return false;
+
+        troop._gunslingerKiting = true;
+        troop._gunslingerKiteDest = { x: kiteDest.x, y: kiteDest.y };
+        troop._gunslingerKiteNextRepathAt = now + this.GUNSLINGER_KITE_REPATH_COOLDOWN_MS;
+        Player.moveTo(troop, path);
+
+        if (this._isAttackReady(troop, target)) fightManager.attack(troop);
+        return true;
+    }
+
     static handleStateIntteruptStart(troop, targetState) {
         if (troop.state === targetState) return;
         InterruptController.interruptTroop(troop, "state_interrupt", targetState);
@@ -1992,6 +2387,200 @@ export class Player {
 
     static _isFighterUnit(troop) {
         return !!(troop?.isBrawler || troop?.isBlademaster || troop?.isGunslinger || troop?.isFortGrunt);
+    }
+
+    static _combatTargetId(target) {
+        if (!target) return null;
+        return target.id ?? target.body?.id ?? `${Math.floor((target.x ?? 0) / SQUARESIZE)},${Math.floor((target.y ?? 0) / SQUARESIZE)}`;
+    }
+
+    static _combatDistance(a, b) {
+        if (!a || !b) return Infinity;
+        return Phaser.Math.Distance.Between(a.x ?? 0, a.y ?? 0, b.x ?? 0, b.y ?? 0);
+    }
+
+    static _isEnemyCandidateForTroop(troop, enemy) {
+        return !!(
+            troop?.active &&
+            troop.body &&
+            enemy?.active &&
+            enemy.body &&
+            enemy.body.team !== troop.body.team &&
+            !enemy.dontTrack &&
+            !enemy.body?.dontTrack &&
+            this._isCombatTargetableUnit(enemy)
+        );
+    }
+
+    static _markCombatTargetSticky(troop, target, durationMs = this.FIGHTER_TARGET_STICKY_MS) {
+        if (!troop?.active || !target?.active) return;
+        troop._combatTargetStickyId = this._combatTargetId(target);
+        troop._combatTargetStickyUntil = this._sceneNowMs(troop) + Math.max(0, Number(durationMs) || 0);
+    }
+
+    static _isStickyCombatTarget(troop, target, now = this._sceneNowMs(troop)) {
+        if (!troop?.active || !target?.active) return false;
+        return (
+            troop._combatTargetStickyId === this._combatTargetId(target) &&
+            now < Number(troop._combatTargetStickyUntil || 0)
+        );
+    }
+
+    static recordRecentCombatAttacker(target, attacker, opts = {}) {
+        if (!this._isFighterUnit(target)) return false;
+        if (!target?.active || target.body?.team !== 1) return false;
+        if (!this._isEnemyCandidateForTroop(target, attacker)) return false;
+
+        const now = this._sceneNowMs(target);
+        const durationMs = Math.max(0, Number(opts.durationMs ?? this.FIGHTER_RECENT_ATTACKER_MS) || 0);
+        target._recentCombatAttacker = attacker;
+        target._recentCombatAttackerId = this._combatTargetId(attacker);
+        target._recentCombatAttackerHitAt = now;
+        target._recentCombatAttackerUntil = now + durationMs;
+        return true;
+    }
+
+    static clearRecentCombatAttacker(troop, attacker = null) {
+        if (!troop) return;
+        if (attacker && troop._recentCombatAttacker !== attacker) return;
+        troop._recentCombatAttacker = null;
+        troop._recentCombatAttackerId = null;
+        troop._recentCombatAttackerHitAt = 0;
+        troop._recentCombatAttackerUntil = 0;
+    }
+
+    static _getRecentCombatAttacker(troop, now = this._sceneNowMs(troop)) {
+        const attacker = troop?._recentCombatAttacker;
+        if (!attacker) return null;
+
+        if (now >= Number(troop._recentCombatAttackerUntil || 0)) {
+            this.clearRecentCombatAttacker(troop);
+            return null;
+        }
+
+        if (!this._isEnemyCandidateForTroop(troop, attacker)) {
+            this.clearRecentCombatAttacker(troop);
+            return null;
+        }
+
+        if (!this._canReachWorldForTroop(troop, attacker.x, attacker.y)) {
+            return null;
+        }
+
+        return attacker;
+    }
+
+    static _isShootableTarget(troop, target, weapon = troop?.weapon) {
+        if (!weapon || !this._isEnemyCandidateForTroop(troop, target)) return false;
+        if (this._combatDistance(troop, target) > Number(weapon.range || 0)) return false;
+        return !weapon.projectile || Projectile.hasLineOfSight(troop, target);
+    }
+
+    static _getClosestCloseThreat(troop, candidates = [], radius = this.FIGHTER_CLOSE_THREAT_RADIUS) {
+        let best = null;
+        let bestDist = Infinity;
+        const maxDist = Math.max(0, Number(radius) || 0);
+
+        for (const enemy of candidates) {
+            if (!this._isEnemyCandidateForTroop(troop, enemy)) continue;
+            if (!this._canReachWorldForTroop(troop, enemy.x, enemy.y)) continue;
+            const dist = this._combatDistance(troop, enemy);
+            if (dist > maxDist || dist >= bestDist) continue;
+            best = enemy;
+            bestDist = dist;
+        }
+
+        return best;
+    }
+
+    static _chooseImmediateFighterTarget(troop, candidates = [], currentTarget = null, opts = {}) {
+        const closeTarget = this._getClosestCloseThreat(troop, candidates, opts.closeRadius ?? this.FIGHTER_CLOSE_THREAT_RADIUS);
+        if (closeTarget) return closeTarget;
+
+        const recentAttacker = this._getRecentCombatAttacker(troop);
+        if (recentAttacker && candidates.includes(recentAttacker)) return recentAttacker;
+
+        if (
+            opts.allowSticky !== false &&
+            currentTarget?.active &&
+            candidates.includes(currentTarget) &&
+            (
+                this._isStickyCombatTarget(troop, currentTarget) ||
+                this._isCommittedToCombatTarget(troop, currentTarget)
+            )
+        ) {
+            return currentTarget;
+        }
+
+        return null;
+    }
+
+    static _chooseClosestShootableTarget(troop, candidates = []) {
+        let best = null;
+        let bestDist = Infinity;
+
+        for (const enemy of candidates) {
+            if (!this._isShootableTarget(troop, enemy, troop.weapon)) continue;
+            const dist = this._combatDistance(troop, enemy);
+            if (dist < bestDist) {
+                best = enemy;
+                bestDist = dist;
+            }
+        }
+
+        return best;
+    }
+
+    static _chooseGunslingerCombatTarget(troop, candidates = [], opts = {}) {
+        const valid = candidates.filter(enemy => this._isEnemyCandidateForTroop(troop, enemy));
+        if (!valid.length) return null;
+
+        const shootable = this._chooseClosestShootableTarget(troop, valid);
+        if (shootable) return shootable;
+
+        const currentTarget = opts.currentTarget ?? troop.track?.[0]?.gameObject ?? null;
+        const closeTarget = this._getClosestCloseThreat(troop, valid, this.GUNSLINGER_DANGER_RADIUS);
+        if (closeTarget) return closeTarget;
+
+        const recentAttacker = this._getRecentCombatAttacker(troop);
+        if (recentAttacker && valid.includes(recentAttacker)) return recentAttacker;
+
+        const emergencyCandidates = Array.isArray(opts.emergencyCandidates)
+            ? opts.emergencyCandidates.filter(enemy => valid.includes(enemy))
+            : [];
+        if (emergencyCandidates.length) {
+            return CombatSpacingCoordinator.chooseBestEnemyTarget(troop, emergencyCandidates, {
+                anchor: opts.anchor ?? troop,
+                currentTarget,
+                priorityFn: opts.priorityFn,
+                assignmentPriorityFn: opts.assignmentPriorityFn,
+                priorityWeight: opts.priorityWeight ?? 100000,
+                assignmentWeight: 0,
+                pressureWeight: 0,
+                anchorWeight: 1,
+                troopWeight: 0.1,
+                keepFocusWeight: 8,
+            });
+        }
+
+        if (
+            currentTarget?.active &&
+            valid.includes(currentTarget) &&
+            (
+                this._isStickyCombatTarget(troop, currentTarget) ||
+                this._isCommittedToCombatTarget(troop, currentTarget)
+            )
+        ) {
+            return currentTarget;
+        }
+
+        return CombatSpacingCoordinator.chooseBestEnemyTarget(troop, valid, {
+            currentTarget,
+            strictTargetSpread: true,
+            strictTargetSpreadMaxExtraDistance: this.FIGHTER_SPREAD_MAX_EXTRA_DISTANCE,
+            strictTargetSpreadMaxRatio: this.FIGHTER_SPREAD_MAX_RATIO,
+            keepFocusWeight: 8,
+        });
     }
 
     static _cleanupCombatTicketForTarget(teamNumber, target) {
@@ -2016,7 +2605,7 @@ export class Player {
     static _isAttackReady(troop, target) {
         if (!troop?.weapon || !target?.active) return false;
         if (target?.body && !this._isCombatTargetableUnit(target)) return false;
-        if (troop._attackRecoveryTimer) return false;
+        if (fightManager.hasAttackRecovery?.(troop)) return false;
         const inRange = Phaser.Math.Distance.Between(troop.x, troop.y, target.x, target.y) <= troop.weapon.range;
         if (!inRange) return false;
         if (troop.weapon.projectile && !Projectile.hasLineOfSight(troop, target)) return false;
@@ -2090,25 +2679,7 @@ export class Player {
     static _canEnemyBeDefendedAgainst(troop, enemy, townCenter = null) {
         if (!troop?.active || !enemy?.active || !enemy?.body) return false;
         if (enemy.body.team === troop.body?.team || enemy.dontTrack) return false;
-
-        const regionSystem = troop.body?.team === 0 ? Map.enemyRegionSystem : Map.regionSystem;
-        if (!regionSystem) return true;
-
-        const troopRegion = regionSystem.getRegionIdForWorldPoint?.(troop.x, troop.y);
-        const enemyRegion = regionSystem.getRegionIdForWorldPoint?.(enemy.x, enemy.y);
-
-        if (
-            Number.isFinite(troopRegion) &&
-            Number.isFinite(enemyRegion) &&
-            troopRegion >= 0 &&
-            enemyRegion >= 0
-        ) {
-            return enemyRegion === troopRegion;
-        }
-
-        if (!regionSystem.canReachWorldToWorld) return true;
-        const canReachFromTroop = regionSystem.canReachWorldToWorld(troop.x, troop.y, enemy.x, enemy.y);
-        return canReachFromTroop;
+        return this._canReachWorldForTroop(troop, enemy.x, enemy.y);
     }
 
     static _collectTownDefenseCandidates(troop, townCenter) {
@@ -2134,7 +2705,7 @@ export class Player {
     static _isCommittedToCombatTarget(troop, target) {
         if (!troop?.active || !target?.active || !troop.weapon) return false;
         if (troop.state === CONTROL_STATES.ATTACK_MODE) return true;
-        if (troop._attackRecoveryTimer) return true;
+        if (fightManager.hasAttackRecovery?.(troop)) return true;
         if (this._isAttackReady(troop, target)) return true;
 
         const commitDistance = Math.max(
@@ -2152,7 +2723,10 @@ export class Player {
         if (emergencyCandidates.length && !currentIsEmergency) return false;
         if (this._townDefenseReachTier(currentTarget) > 0 && !currentIsEmergency) return false;
 
-        return this._isCommittedToCombatTarget(troop, currentTarget);
+        return (
+            this._isCommittedToCombatTarget(troop, currentTarget) ||
+            this._isStickyCombatTarget(troop, currentTarget)
+        );
     }
 
     static _townDefensePriority(troop, enemy, townCenter) {
@@ -2205,6 +2779,40 @@ export class Player {
         const currentTarget = troop.track?.[0]?.gameObject ?? troop.forcedTarget ?? null;
         const candidates = this._collectTownDefenseCandidates(troop, townCenter);
         const emergencyCandidates = candidates.filter((enemy) => this._isTownDefenseEmergencyEnemy(troop, enemy));
+
+        if (troop.isGunslinger) {
+            const target = this._chooseGunslingerCombatTarget(troop, candidates, {
+                anchor: townCenter,
+                currentTarget,
+                emergencyCandidates,
+                priorityFn: (enemy) => this._townDefensePriority(troop, enemy, townCenter),
+                assignmentPriorityFn: (enemy) => this._townDefenseCoveragePriority(troop, enemy, currentTarget),
+                priorityWeight: 100000,
+            });
+
+            if (target?.body) {
+                const previousBody = troop.track?.[0] ?? null;
+                const movedTile = this._syncTrackToTarget(troop, target);
+                return {
+                    target,
+                    shouldRepath: movedTile || previousBody !== target.body || (!troop.currentPath?.length && !this._isAttackReady(troop, target)),
+                };
+            }
+        }
+
+        const immediateTarget = this._chooseImmediateFighterTarget(troop, candidates, currentTarget, {
+            allowSticky: false,
+            closeRadius: this.FIGHTER_CLOSE_THREAT_RADIUS,
+        });
+        if (immediateTarget?.body) {
+            const previousBody = troop.track?.[0] ?? null;
+            const movedTile = this._syncTrackToTarget(troop, immediateTarget);
+            return {
+                target: immediateTarget,
+                shouldRepath: movedTile || previousBody !== immediateTarget.body || (!troop.currentPath?.length && !this._isAttackReady(troop, immediateTarget)),
+            };
+        }
+
         if (this._shouldKeepTownDefenseTarget(troop, currentTarget, candidates, emergencyCandidates)) {
             const previousBody = troop.track?.[0] ?? null;
             const movedTile = this._syncTrackToTarget(troop, currentTarget);
@@ -2224,6 +2832,8 @@ export class Player {
             anchorWeight: 1,
             troopWeight: 0.05,
             keepFocusWeight: 10,
+            strictTargetSpreadMaxExtraDistance: this.FIGHTER_SPREAD_MAX_EXTRA_DISTANCE,
+            strictTargetSpreadMaxRatio: this.FIGHTER_SPREAD_MAX_RATIO,
         });
 
         if (!target?.body) {
@@ -2243,6 +2853,7 @@ export class Player {
         let movedTile = true;
         if (!troop.track || troop.track[0] !== target.body) {
             troop.track = [target.body, { x: target.x, y: target.y }];
+            this._markCombatTargetSticky(troop, target);
             movedTile = true;
         } else {
             const regionSystem = troop.body?.team === 0 ? Map.enemyRegionSystem : Map.regionSystem;
@@ -2426,16 +3037,23 @@ export class Player {
         if (troop.state === CONTROL_STATES.SLEEP_MODE) {
             troop.track = null;
             troop.forcedTarget = null;
+            this.clearRecentCombatAttacker(troop);
+            this.clearGunslingerKiteState(troop);
             troop.currentPath?.splice?.(0);
             troop.body?.setVelocity?.(0, 0);
             return;
         }
 
-        const fallbackDist = troop.body.team ? 100 : 20;
-        const awareness = troop?.awareness ?? troop?.type?.awareness;
-        const overlapDist = Number.isFinite(awareness) ? awareness : fallbackDist;
-        const neighbours = Player.scene.physics.overlapCirc(troop.x, troop.y, overlapDist);
         const hasWeapon = !!troop.weapon;
+        const fallbackDist = troop.body.team
+            ? (troop.isGunslinger && hasWeapon ? Math.max(100, Number(troop.weapon?.range || 0), this.GUNSLINGER_DANGER_RADIUS) : 100)
+            : 20;
+        const awareness = troop?.awareness ?? troop?.type?.awareness;
+        const overlapDist = Math.max(
+            fallbackDist,
+            Number.isFinite(awareness) ? Number(awareness) : 0
+        );
+        const neighbours = Player.scene.physics.overlapCirc(troop.x, troop.y, overlapDist);
         const isPlayerFighter = troop.body?.team === 1 && this._isFighterUnit(troop) && hasWeapon;
 
         const isObjectiveTaskState =
@@ -2472,21 +3090,15 @@ export class Player {
                 Teams.movePlayerState(troop, CONTROL_STATES.TRACK_TARGET);
             }
 
-            if (this._isAttackReady(troop, target)) {
-                troop.currentPath?.splice?.(0);
-                troop.body?.setVelocity?.(0, 0);
+            if (troop.isGunslinger && this._tryGunslingerKite(troop, target)) {
                 return;
             }
 
-            if (troop.isGunslinger) {
-                const kiteDest = this.computeKiteDestination(troop, target, troop.weapon);
-                if (kiteDest) {
-                    const path = Player.pathTo(troop, kiteDest.x, kiteDest.y, false);
-                    if (path?.length) {
-                        Player.moveTo(troop, path);
-                        return;
-                    }
-                }
+            if (this._isAttackReady(troop, target)) {
+                this.clearGunslingerKiteState(troop);
+                troop.currentPath?.splice?.(0);
+                troop.body?.setVelocity?.(0, 0);
+                return;
             }
 
             this._chaseOrBreachTarget(troop, target, movedTile || !troop.currentPath?.length);
@@ -2524,21 +3136,15 @@ export class Player {
         if (troop.state !== CONTROL_STATES.ATTACK_MODE) {
             Teams.movePlayerState(troop, CONTROL_STATES.TRACK_TARGET);
         }
-        if (this._isAttackReady(troop, trackedGO)) {
-            troop.currentPath?.splice?.(0);
-            troop.body?.setVelocity?.(0, 0);
+        if (troop.isGunslinger && this._tryGunslingerKite(troop, trackedGO)) {
             return;
         }
 
-        if (troop.isGunslinger) {
-            const kiteDest = this.computeKiteDestination(troop, trackedGO, troop.weapon);
-            if (kiteDest) {
-                const path = Player.pathTo(troop, kiteDest.x, kiteDest.y, false);
-                if (path?.length) {
-                    Player.moveTo(troop, path);
-                    return;
-                }
-            }
+        if (this._isAttackReady(troop, trackedGO)) {
+            this.clearGunslingerKiteState(troop);
+            troop.currentPath?.splice?.(0);
+            troop.body?.setVelocity?.(0, 0);
+            return;
         }
 
         this._chaseOrBreachTarget(
@@ -2616,6 +3222,10 @@ export class Player {
             Teams.movePlayerState(troop, resume.state);
         }
 
+        if (troop.task && this._repathCurrentTaskToApproach(troop)) {
+            return;
+        }
+
         // Prefer original final world goal.
         if (resume?.finalPos?.x != null && resume?.finalPos?.y != null) {
             const path = this.pathTo(troop, resume.finalPos.x, resume.finalPos.y, false);
@@ -2652,8 +3262,7 @@ export class Player {
         }
 
         if (troop.task && Number.isFinite(troop.task.x) && Number.isFinite(troop.task.y)) {
-            const path = this.pathTo(troop, troop.task.x, troop.task.y, true);
-            if (path?.length) this.moveTo(troop, path);
+            this._repathCurrentTaskToApproach(troop);
         }
     }
 
@@ -2847,6 +3456,8 @@ export class Player {
             troop.task = null;
             troop.forcedTarget = null;
             CombatSpacingCoordinator.clearTroopFocus(troop);
+            this.clearRecentCombatAttacker(troop);
+            this.clearGunslingerKiteState(troop);
 
             // Path to the guard point
             const path = Player.pathTo(troop, worldX, worldY, false);
@@ -2872,6 +3483,8 @@ export class Player {
         troop.guardRadius = radius;
         troop.forcedTarget = null;
         CombatSpacingCoordinator.clearTroopFocus(troop);
+        this.clearRecentCombatAttacker(troop);
+        this.clearGunslingerKiteState(troop);
 
         // Set state + path to guard post
         Teams.movePlayerState(troop, CONTROL_STATES.HEADING_TO_GUARD);
@@ -3219,6 +3832,8 @@ export class Player {
         troop._miniBarLastHit = 0;
         this._setTroopSelected(troop, false);
         this._hideMiniBars(troop);
+        this.clearRecentCombatAttacker(troop);
+        this.clearGunslingerKiteState(troop);
 
         this.clearPoseLock(troop, troop.idle);
         this._clearStatusEmote(troop);

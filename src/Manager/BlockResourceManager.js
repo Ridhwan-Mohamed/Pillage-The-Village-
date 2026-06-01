@@ -643,6 +643,10 @@ export class blockResourceManager{
                     
                     this.NavMeshUpdater.blockTiles(blockTiles, true);
                     this.EnemyNavMeshUpdater.blockTiles(blockTiles, true);
+                    Map.regionSystem?.markDirty?.();
+                    Map.regionDrawer?.markDirty?.();
+                    Map.enemyRegionSystem?.markDirty?.();
+                    Map.enemyRegionDrawer?.markDirty?.();
                     buildingManager.removeBuildingFromArray(task.x, task.y);
                     VisibilitySystem.onOccluderChangedRect(task.x, task.y, task.type.lenX, task.type.lenY, /*isBlock=*/false);
                 }
