@@ -20,6 +20,11 @@ export class Wall {
 
   static keyFor(x, y) { return `${x},${y}`; }
 
+  static normalizeTeamId(team, fallback = 1) {
+    const normalized = Number(team);
+    return Number.isFinite(normalized) ? normalized : fallback;
+  }
+
   static isWallOrDoorCell(cell) {
     const v = Array.isArray(cell) ? cell[1] : cell;
     // wall pieces: 2..10, wood wall pieces: 57..65, doors: 66/67
@@ -75,7 +80,7 @@ export class Wall {
     let w = this.byCell.get(k);
 
     const hasExplicitTeam = team !== undefined && team !== null;
-    const resolvedTeam = hasExplicitTeam ? team : (w?.team ?? 1);
+    const resolvedTeam = Wall.normalizeTeamId(hasExplicitTeam ? team : w?.team, 1);
 
     // If none exists (or it was deactivated), create fresh.
     if (!w || !w.active) {
@@ -251,7 +256,7 @@ export class Wall {
     this.scene = scene;
     this.x = x;
     this.y = y;
-    this.team = team;
+    this.team = Wall.normalizeTeamId(team, 1);
 
     const kind = Wall.kindFromGridVal(gridVal);
     if (!kind) {
@@ -307,7 +312,7 @@ export class Wall {
 
     this.collider.wallRef = this;
     this.collider.isWall = true;
-    this.collider.team = team;
+    this.collider.team = this.team;
 
 
     // ✅ backref so collision handler can identify a wall

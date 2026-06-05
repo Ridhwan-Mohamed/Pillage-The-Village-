@@ -877,6 +877,15 @@ export class Map{
                 }
             }
         }
+        this.finalizeBlockPlacement(posX, posY, item);
+    }
+
+    static finalizeBlockPlacement(posX, posY, item) {
+        if (!item?.block || !this._shouldSkipManagedTopRender?.(item.name)) return;
+        const lenX = Math.max(1, Number(item.lenX || 1) || 1);
+        const lenY = Math.max(1, Number(item.lenY || 1) || 1);
+        this.redrawRect?.(posX - 1, posY - 1, lenX + 2, lenY + 2, 1);
+        this.scene?.zoomMixer?.updateOverviewCell?.(posX - 1, posY - 1, this.grid, lenX + 2, lenY + 2);
     }
 
     // Return whichever layer in `cell` is floor-depth; if both are floor, prefer [0].
@@ -888,7 +897,7 @@ export class Map{
         const d0 = t0?.depth, d1 = t1?.depth;
         if (d0 === FLOORDEPTH && d1 !== FLOORDEPTH) return v0;
         if (d1 === FLOORDEPTH && d0 !== FLOORDEPTH) return v1;
-        return v1; // both floor (or neither): default to [0]
+        return v0; // both floor (or neither): default to [0]
     }
 
     // Choose which layer index to write to in an existing array cell.
@@ -2407,7 +2416,9 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
     }
 
     static _wallTeamAt(gx, gy) {
-        return Wall.getAt(gx, gy)?.team ?? null;
+        const team = Wall.getAt(gx, gy)?.team;
+        const normalized = Number(team);
+        return Number.isFinite(normalized) ? normalized : null;
     }
 
     static _hasSameTeamWallAt(gx, gy, teamNumber) {
@@ -2415,8 +2426,13 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
         if (!info) return false;
 
         const neighborTeam = this._wallTeamAt(gx, gy);
-        if (teamNumber == null || neighborTeam == null) return false;
-        return neighborTeam === teamNumber;
+        const selfTeam = Number(teamNumber);
+        if (!Number.isFinite(selfTeam) || neighborTeam == null) return false;
+        return neighborTeam === selfTeam;
+    }
+
+    static _isWallOrDoorAt(gx, gy) {
+        return !!this._wallStructureInfoAt(gx, gy);
     }
 
     static refreshWallShapesAround(x, y, pad = 1) {
@@ -2500,10 +2516,9 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
         }
 
         const isWallType = def.name === "wall" || def.name === "woodWall";
-        const wallTeam = isWallType ? this._wallTeamAt(x, y) : null;
         const hasNeighbor = (gx, gy) =>
-            (isWallType && wallTeam != null)
-                ? this._hasSameTeamWallAt(gx, gy, wallTeam)
+            isWallType
+                ? this._isWallOrDoorAt(gx, gy)
                 : this._hasTypeAt(gx, gy, tileType);
 
         const A = hasNeighbor(x, y-1); // above

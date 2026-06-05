@@ -697,9 +697,6 @@ export class SelectionCommandBar {
 
     this._closeSellConfirmation();
     if (!result.ok) {
-      if (result.reason === "phase_locked") {
-        showAlert(this.scene, result.message || "Troops can only be sold during dawn or day.", "#fecaca");
-      }
       return;
     }
 

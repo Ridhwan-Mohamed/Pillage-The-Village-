@@ -25,7 +25,10 @@ export class ClayOvenUI {
         this.openUIs = new Map();
         this._onOvenUpdated = (oven) => this.refreshStatus(oven);
         this._onOvenAdded = (oven) => this.refreshStatus(oven);
-        this._onOvenRemoved = (oven) => this.hideStatus(oven);
+        this._onOvenRemoved = (oven) => {
+            this.hideStatus(oven);
+            this.hideMinor(oven, { animate: false });
+        };
         this._onZoomModeChanged = (mode, duration) => this.applyOverviewMode(mode, duration);
         this.scene.events.on('oven:updated', this._onOvenUpdated);
         this.scene.events.on('oven:added', this._onOvenAdded);
@@ -36,6 +39,12 @@ export class ClayOvenUI {
 
     static _isOverviewMode() {
         return isOverviewMode(this.scene);
+    }
+
+    static _offSceneUpdate(listener) {
+        if (typeof listener === 'function') {
+            this.scene?.events?.off('update', listener);
+        }
     }
 
     static _eachOven(fn) {
@@ -256,14 +265,19 @@ export class ClayOvenUI {
 
     // === Minor UI (hover) ===
     static showMinor(oven, opts = {}) {
+        if (!oven) return;
         if (this._isOverviewMode()) return;
         if (oven.minorUI) {
-            oven.minorUI.hiddenForOverview = false;
-            oven.minorUIUpdater?.();
-            animateOverlayPop(this.scene, oven.minorUI.root, true, {
-                duration: Math.max(0, Number(opts.duration ?? 140) || 0),
-            });
-            return;
+            if (!oven.minorUI.root?.active || !oven.minorUI.status?.active) {
+                this.hideMinor(oven, { animate: false });
+            } else {
+                oven.minorUI.hiddenForOverview = false;
+                oven.minorUIUpdater?.();
+                animateOverlayPop(this.scene, oven.minorUI.root, true, {
+                    duration: Math.max(0, Number(opts.duration ?? 140) || 0),
+                });
+                return;
+            }
         }
 
         const panel = createBuildingHoverPanel(this.scene, {
@@ -283,8 +297,20 @@ export class ClayOvenUI {
         panel.add(status);
         oven.minorUI = { root: panel, status, hiddenForOverview: false };
 
-        // 🔁 Frame-by-frame position update in screen space
-        oven.minorUIUpdater = () => {
+        const updateMinorPosition = () => {
+            if (
+                oven.minorUI?.root !== panel ||
+                !panel?.active ||
+                !status?.active ||
+                !oven.sprite?.active ||
+                !this.scene?.sys?.isActive?.()
+            ) {
+                this._offSceneUpdate(updateMinorPosition);
+                if (oven.minorUI?.root === panel) oven.minorUI = null;
+                if (oven.minorUIUpdater === updateMinorPosition) oven.minorUIUpdater = null;
+                return;
+            }
+
             const worldX = oven.sprite.x;
             const worldY = oven.sprite.y - 40;
 
@@ -295,30 +321,33 @@ export class ClayOvenUI {
 
             panel.setPosition(screenX, screenY);
             const slotCount = oven.cookingSlots?.length || 1;
-            status.setText(`Fuel: ${oven.fuel || 0}\nBurner: ${oven.cookingSlots?.filter(x => x).length || 0}/${slotCount}`);
+            const nextText = `Fuel: ${oven.fuel || 0}\nBurner: ${oven.cookingSlots?.filter(x => x).length || 0}/${slotCount}`;
+            if (status.text !== nextText) status.setText(nextText);
         };
 
-        this.scene.events.on('update', oven.minorUIUpdater);
-        oven.minorUIUpdater();
+        oven.minorUIUpdater = updateMinorPosition;
+        oven.minorUI.updatePosition = updateMinorPosition;
+        this.scene.events.on('update', updateMinorPosition);
+        updateMinorPosition();
         animateOverlayPop(this.scene, panel, true, {
             duration: Math.max(0, Number(opts.duration ?? 140) || 0),
         });
     }
 
     static hideMinor(oven, opts = {}) {
+        if (!oven) return;
         if (oven.minorUI) {
             const ui = oven.minorUI;
             const root = ui.root;
             const destroy = () => {
                 if (oven.minorUI !== ui) return;
+                const updatePosition = ui.updatePosition || oven.minorUIUpdater;
+                this._offSceneUpdate(updatePosition);
+                if (oven.minorUIUpdater === updatePosition) oven.minorUIUpdater = null;
+
                 root?._overlayPopTween?.remove?.();
                 root?.destroy?.();
                 oven.minorUI = null;
-
-                if (oven.minorUIUpdater) {
-                    this.scene.events.off('update', oven.minorUIUpdater);
-                    oven.minorUIUpdater = null;
-                }
             };
 
             if (opts.animate === false || !root?.visible) {
@@ -465,9 +494,7 @@ export class ClayOvenUI {
     static closeMajor(oven) {
         const container = this.openUIs.get(oven);
         if (container) {
-            if (container._uiUpdate) {
-                this.scene.events.off('update', container._uiUpdate);
-            }
+            this._offSceneUpdate(container._uiUpdate);
             container.destroy();
             this.openUIs.delete(oven);
         }

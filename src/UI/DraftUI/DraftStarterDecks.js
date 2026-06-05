@@ -35,7 +35,7 @@ export const STARTER_DECKS = Object.freeze([
     summary: "Heavier seeds, food, and water for a forgiving early economy.",
     tradeoff: "You start with the lightest building stockpile.",
     resources: Object.freeze({
-      money: 42000,
+      money: 420,
       seeds: 14,
       berries: 8,
       wood: 5,

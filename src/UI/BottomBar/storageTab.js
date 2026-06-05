@@ -112,7 +112,9 @@ export default class StorageTab {
 
 
   destroy() {
-    this.scene.events.off("update", this._update);
+    if (typeof this._update === "function") {
+      this.scene.events.off("update", this._update);
+    }
     this.scene.events.off("storage:added", this._onAdded);
     this.scene.events.off("storage:removed", this._onRemoved);
     this.scene.events.off("storage:updated", this._onUpdated);

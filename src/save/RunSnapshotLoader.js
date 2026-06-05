@@ -294,7 +294,8 @@ function rebuildBuildingRegistry(scene) {
 
 function restoreWalls(snapshotWalls = []) {
   for (const saved of snapshotWalls) {
-    const wall = Wall.ensureAt(Player.scene, saved.x, saved.y, saved.teamId);
+    const teamId = Number(saved.teamId ?? 1);
+    const wall = Wall.ensureAt(Player.scene, saved.x, saved.y, Number.isFinite(teamId) ? teamId : 1);
     if (!wall) continue;
     wall.maxHp = Number(saved.maxHp || wall.maxHp || 1);
     wall.hp = Number(saved.hp || wall.hp || wall.maxHp || 1);
@@ -494,6 +495,7 @@ function restorePlayers(scene, snapshot, buildingRegistry) {
     troop.roam = !!saved.roam;
     troop.carrying = restoreItemStack(saved.carrying);
     troop.waterBucket = assignPlain(null, saved.waterBucket, troop.waterBucket ?? null);
+    troop.type?.clampWaterBucket?.(troop);
     troop._sleepQueued = !!saved.sleepQueued;
     troop.guardPost = assignPlain(null, saved.guardPost, null);
     troop.deferredCarry = null;

@@ -1159,15 +1159,15 @@ export class buildingManager{
         const queueMap = new globalThis.Map();
         for (const queuedTask of queueTasks) {
             const queuedTypeName = queuedTask?.buildTypeName ?? queuedTask?.buildType?.name ?? queuedTask?.type?.name ?? null;
-            if (this._wallFamilyForTypeName(queuedTypeName) !== family) continue;
+            if (!this._wallFamilyForTypeName(queuedTypeName)) continue;
             queueMap.set(`${queuedTask.x},${queuedTask.y}`, queuedTypeName);
         }
 
-        const placedMatchesFamily = (x, y) => {
+        const placedWallOrDoorAt = (x, y) => {
             const info = Map._wallStructureInfoAt?.(x, y) || null;
-            return this._wallFamilyForTypeName(info?.name) === family;
+            return !!info;
         };
-        const solidAt = (x, y) => queueMap.has(`${x},${y}`) || placedMatchesFamily(x, y);
+        const solidAt = (x, y) => queueMap.has(`${x},${y}`) || placedWallOrDoorAt(x, y);
 
         const up = solidAt(task.x, task.y - 1);
         const down = solidAt(task.x, task.y + 1);
@@ -3294,7 +3294,7 @@ export class buildingManager{
     static handlePlacement(task, teamNumber = 1){
         const ownerTeam = Number(teamNumber ?? task?.teamNumber ?? 1) || 1;
         if(task.type == TILE_TYPES.clayOven){
-            new ClayOven(task.x, task.y, ownerTeam);
+            new ClayOven(task.x, task.y, ownerTeam, { applyNavUpdate: true });
         }else if(task.type == TILE_TYPES.storage){
             new StorageBuilding(task.x, task.y, ownerTeam);
         }else if(task.type == TILE_TYPES.house1 || task.type == TILE_TYPES.house2){
@@ -3417,7 +3417,7 @@ export class buildingManager{
             if (task.duration <= 0) {
                 if (sprite.timer) { sprite.timer.remove(false); sprite.timer = null; }
                 console.log("Done Destroying.");
-                AudioManager.playWorldSound("sfx_building_collapse");
+                this.playBuildingCollapseSfxOnce(task.value?.buildingRef || task.value);
                 this._completeDestroyBlock(sprite, task);   // ✅ single source of truth
                 return;
             }
@@ -3551,7 +3551,7 @@ export class buildingManager{
             task.value.destroy(); // fallback: just sprite
         }
 
-        this.clearBlockFootprint(task.x, task.y, task.type);
+        this.cleanupDestroyedBlockBuilding(targetObj || task.value, task.x, task.y, task.type);
 
         // per-unit callbacks (kept from your completion block)
         if (sprite.type == Brawler || sprite.type == Blademaster || sprite.type == Gunslinger) {
@@ -3568,13 +3568,43 @@ export class buildingManager{
         Teams.removeFromStateArray(teamNumber, "destroyStates", task);
 
         // ✅ remove building record + clear task from the killer
-        this.removeBuildingFromArray(task.x, task.y);
         sprite.task = null;
 
         // ✅ reassign the killer
         Teams.movePlayerState(sprite, CONTROL_STATES.TRACK_MODE);
         if (destroyJobId) this.refreshQueuedDestroyJobVisuals(teamNumber);
         if (destroyJobId) this._activateLinkedBuildsIfDestroyJobComplete(destroyJobId, teamNumber);
+    }
+
+    static cleanupDestroyedBlockBuilding(buildingOrSprite, x = null, y = null, type = null, opts = {}) {
+        const building = buildingOrSprite?.buildingRef || buildingOrSprite || null;
+        const tileType = type || building?.tileType || building?.buildType || building?.type || null;
+        const gridX = Math.floor(Number(x ?? building?.x ?? building?.gridX ?? building?.sx));
+        const gridY = Math.floor(Number(y ?? building?.y ?? building?.gridY ?? building?.sy));
+
+        if (!tileType || !Number.isFinite(gridX) || !Number.isFinite(gridY)) return false;
+
+        let changed = false;
+        if (!building || !building._blockFootprintCleared) {
+            changed = this.clearBlockFootprint(gridX, gridY, tileType, opts) || changed;
+            if (building) building._blockFootprintCleared = true;
+        }
+
+        if (opts.removeFromArrays !== false && (!building || !building._buildingArrayRemoved)) {
+            this.removeBuildingFromArray(gridX, gridY);
+            if (building) building._buildingArrayRemoved = true;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    static playBuildingCollapseSfxOnce(buildingOrSprite, opts = {}) {
+        const building = buildingOrSprite?.buildingRef || buildingOrSprite || null;
+        if (building?._collapseSfxPlayed) return false;
+        if (building) building._collapseSfxPlayed = true;
+        AudioManager.playWorldSound("sfx_building_collapse", opts);
+        return true;
     }
 
     static clearBlockFootprint(x, y, type, opts = {}) {
@@ -3606,6 +3636,10 @@ export class buildingManager{
 
         if (opts.updateOverview !== false) {
             this.scene?.zoomMixer?.updateOverviewCell?.(startX, startY, Map.grid, lenX, lenY);
+        }
+
+        if (opts.redraw !== false) {
+            Map.redrawRect?.(startX, startY, lenX, lenY, 1);
         }
 
         if (opts.updateNavMesh !== false) {
@@ -3754,6 +3788,13 @@ export class buildingManager{
                 }
                 if (team.buildings.length !== before && Array.isArray(team.enemyDestroyStates)) {
                     team.enemyDestroyStates = team.enemyDestroyStates.filter(t => t.x !== x || t.y !== y);
+                }
+                if (team.buildings.length !== before && Array.isArray(team.buildingFixTasks)) {
+                    team.buildingFixTasks = team.buildingFixTasks.filter(t => {
+                        const remove = t.x === x && t.y === y;
+                        if (remove) this.clearFixTaskVisual?.(t);
+                        return !remove;
+                    });
                 }
             }
         }

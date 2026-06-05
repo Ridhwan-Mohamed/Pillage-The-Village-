@@ -16,8 +16,6 @@ import { buildingManager } from "../Manager/buildingManager";
 import { UI_ITEM_TYPES } from "../UI/UIConstants";
 import { ClayOven } from "../buildings/ClayOven";
 import {
-  canSellTroopsNow,
-  getTroopSellLockMessage,
   getTroopSellValue as getBalancedTroopSellValue,
 } from "../balance/GameBalance";
 
@@ -401,16 +399,6 @@ export class OrderRunner {
   static sellTroops(troops, scene = null, opts = {}) {
     const selection = this.getSelectionProfile(troops);
     if (!selection.hasSelection) return { ok: false, sold: 0, money: 0 };
-    const worldScene = scene?.worldScene ?? scene ?? Player.scene;
-    if (!canSellTroopsNow(worldScene)) {
-      return {
-        ok: false,
-        reason: "phase_locked",
-        message: getTroopSellLockMessage(),
-        sold: 0,
-        money: 0,
-      };
-    }
 
     const toSell = [...selection.troops];
     const money = toSell.reduce((sum, troop) => sum + this.getTroopSellValue(troop), 0);
@@ -1281,7 +1269,7 @@ export class OrderRunner {
     if (!troop?.isFireman) return false;
 
     if (troop.carrying) {
-      if (troop.pendingFuelJob && troop.carrying === UI_ITEM_TYPES.wood) {
+      if (troop.pendingFuelJob && StorageManager.isCarryingItem(troop, UI_ITEM_TYPES.wood)) {
         return troop.type?.goRefuelOven?.(troop, troop.pendingFuelJob) || false;
       }
       if (troop.pendingOvenJob) {
@@ -1359,6 +1347,8 @@ export class OrderRunner {
 
     let bestFuel = null;
     let bestFuelScore = null;
+    let bestStarterWater = null;
+    let bestStarterWaterScore = null;
     let bestWater = null;
     let bestWaterScore = null;
 
@@ -1405,14 +1395,19 @@ export class OrderRunner {
           Number(oven?.x || 0),
           Number(oven?.y || 0),
         ];
-        if (!bestWater || this._compareCandidateScores(waterScore, bestWaterScore) < 0) {
+        if (totalWater <= 0) {
+          if (!bestStarterWater || this._compareCandidateScores(waterScore, bestStarterWaterScore) < 0) {
+            bestStarterWater = { type: "water", oven };
+            bestStarterWaterScore = waterScore;
+          }
+        } else if (!bestWater || this._compareCandidateScores(waterScore, bestWaterScore) < 0) {
           bestWater = { type: "water", oven };
           bestWaterScore = waterScore;
         }
       }
     }
 
-    return bestFuel || bestWater || null;
+    return bestStarterWater || bestFuel || bestWater || null;
   }
 
   static _directOrderStillActive(orderId, teamNumber = 1) {

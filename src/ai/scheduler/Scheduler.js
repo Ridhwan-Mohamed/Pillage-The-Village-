@@ -64,7 +64,7 @@ export class Scheduler {
 
     static _tryCarryRecovery(troop) {
         if (troop.isFarmer) {
-            if (troop.pendingFarmSpot && troop.carrying === UI_ITEM_TYPES.seedCrop) {
+            if (troop.pendingFarmSpot && StorageManager.isCarryingItem(troop, UI_ITEM_TYPES.seedCrop)) {
                 const plot = troop.pendingFarmSpot;
                 if (plot.reservedBy === troop) delete plot.reservedBy;
                 troop.pendingFarmSpot = null;
@@ -73,7 +73,7 @@ export class Scheduler {
         }
 
         if (troop.isFireman && troop.carrying) {
-            if (troop.pendingFuelJob && troop.carrying === UI_ITEM_TYPES.wood) {
+            if (troop.pendingFuelJob && StorageManager.isCarryingItem(troop, UI_ITEM_TYPES.wood)) {
                 return troop.type?.goRefuelOven?.(troop, troop.pendingFuelJob) || false;
             }
             if (troop.pendingOvenJob) {

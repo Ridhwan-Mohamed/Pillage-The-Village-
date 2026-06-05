@@ -37,18 +37,18 @@ export class AchievementBoard {
     this.headerShadow = scene.add.graphics();
     this.headerBg = scene.add.graphics();
     this.headerShine = scene.add.graphics();
-    this.headerTitle = scene.add.text(-(BOARD_W / 2) + 24, -5, "TOWN GOALS", createDisplayTextStyle({
+    this.headerTitle = scene.add.text(-(BOARD_W / 2) + 24, 0, "TOWN GOALS", createDisplayTextStyle({
       fontSize: 14,
       min: 14,
       color: "#eef8ff",
       stroke: "#07111b",
       strokeThickness: 2,
     })).setOrigin(0, 0.5);
-    this.headerStatus = scene.add.text(-(BOARD_W / 2) + 24, 9, "3 ACTIVE", createLabelTextStyle({
+    this.headerStatus = scene.add.text(-(BOARD_W / 2) + 24, 9, "", createLabelTextStyle({
       fontSize: 11,
       min: 11,
       color: "#b9deef",
-    })).setOrigin(0, 0.5);
+    })).setOrigin(0, 0.5).setVisible(false);
     this.chevron = scene.add.text(BOARD_W / 2 - 24, 0, "v", createLabelTextStyle({
       fontSize: 14,
       min: 14,
@@ -525,6 +525,32 @@ export class AchievementBoard {
     this.scene.townXpHud?.refresh?.(true);
   }
 
+  hideUntilDetailed() {
+    this._hiddenUntilDetailed = true;
+    this.scene.tweens.killTweensOf(this.root);
+    this.root.setVisible(false);
+    this.root.setAlpha(0);
+    this.setExpanded(false, false);
+  }
+
+  revealForDetailedMode() {
+    if (!this.root) return;
+    const wasHidden = this._hiddenUntilDetailed || !this.root.visible;
+    this._hiddenUntilDetailed = false;
+    this.scene.tweens.killTweensOf(this.root);
+    this.root.setVisible(true);
+    this.root.setAlpha(wasHidden ? 0 : 1);
+    this.setExpanded(true, wasHidden);
+    if (wasHidden) {
+      this.scene.tweens.add({
+        targets: this.root,
+        alpha: 1,
+        duration: 180,
+        ease: "Quad.Out",
+      });
+    }
+  }
+
   reposition() {
     const clock = this.scene.phaseClock;
     const panelWidth = Math.max(BOARD_W, Number(clock?.panelWidth || BOARD_W));
@@ -587,8 +613,8 @@ export class AchievementBoard {
     if (!force && signature === this._lastSignature) return;
     this._lastSignature = signature;
 
-    const activeCount = Array.isArray(snapshot.activeGoals) ? snapshot.activeGoals.length : 0;
-    this.headerStatus.setText(`${activeCount} ACTIVE  ${snapshot.totalCompleted || 0} DONE`);
+    this.headerStatus.setText("");
+    this.headerStatus.setVisible(false);
     this.chevron.setText(this.expanded ? "^" : "v");
     this._syncNoticeState();
     this.reposition();

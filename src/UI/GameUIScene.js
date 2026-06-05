@@ -8,7 +8,7 @@ import { ContractHud } from "./ContractHud.js";
 import { SelectionCommandBar } from "./SelectionCommandBar.js";
 import { Teams } from "../Teams.js";
 import { getNextHordeUnlock } from "../parcel_system/HordeUnlockTrack.js";
-import { applyPortraitKeyToSprite, getPlayerPortraitKey } from "../players/playerPortraits.js";
+import { applyPortraitKeyToSprite, createPlayerPortraitAnimations, getPlayerPortraitKey } from "../players/playerPortraits.js";
 import { MainMenu } from "../mainMenu.js";
 import { AudioManager } from "../Manager/AudioManager.js";
 import { SaveManager } from "../save/SaveManager.js";
@@ -102,6 +102,9 @@ export class GameUIScene extends Phaser.Scene {
     this._pauseBackdropFx = null;
     this._pauseBlurFx = null;
     this._menuHudIntroPlayed = false;
+    this._gameplayUiReady = false;
+    this._achievementBoardAwaitingDetailedReveal = true;
+    this._achievementBoardRevealTimer = null;
   }
 
   _teardownStageMetaHud() {
@@ -195,6 +198,7 @@ export class GameUIScene extends Phaser.Scene {
   create() {
     const world = this.scene.get(this.worldSceneKey);
     if (!world) return;
+    createPlayerPortraitAnimations(this);
     this._sceneShuttingDown = false;
     this.bindWorldScene(world);
     this._bindPauseControls();
@@ -222,6 +226,8 @@ export class GameUIScene extends Phaser.Scene {
     this._destroyTownXpRewardPresentation();
     this.achievementBoard?.destroy?.();
     this.achievementBoard = null;
+    this._achievementBoardRevealTimer?.remove?.(false);
+    this._achievementBoardRevealTimer = null;
     this.selectionCommandBar?.destroy?.();
     this.selectionCommandBar = null;
     this.contractHud?.destroy?.();
@@ -355,12 +361,18 @@ export class GameUIScene extends Phaser.Scene {
       "mode:completed",
       "achievements:changed",
       "achievement:completed",
+      "zoom:mode-changed",
       "market:adrenaline-changed",
       "market:timed-buff-changed",
     ];
 
     passthrough.forEach((evt) => {
-      const fn = (...args) => this.events.emit(evt, ...args);
+      const fn = (...args) => {
+        this.events.emit(evt, ...args);
+        if (evt === "zoom:mode-changed") {
+          this._maybeRevealAchievementBoardAfterDetailed(args[0], args[1]);
+        }
+      };
       this.worldScene.events.on(evt, fn);
       this._bridged.push({ evt, fn, sourceScene: this.worldScene });
     });
@@ -425,6 +437,7 @@ export class GameUIScene extends Phaser.Scene {
   initGameplayUI() {
     if (!this.worldScene) return;
     if (this._hudBuilt) return;
+    this._gameplayUiReady = true;
 
     this._buildAlertHud();
     this._buildTopHud();
@@ -441,6 +454,7 @@ export class GameUIScene extends Phaser.Scene {
     this._hudBuilt = true;
     this._refreshProductionStatusHud(true);
     this._refreshTownStatusHud(true);
+    this._maybeRevealAchievementBoardAfterDetailed("detailed", 180);
 
     this._syncWorldUiRefs();
     this.worldScene?.setSimulationSpeedReady?.(true);
@@ -526,7 +540,7 @@ export class GameUIScene extends Phaser.Scene {
     return getAlertTone(message, color);
   }
 
-  showAlertMessage(message, color = "#ffffff", duration = 1400) {
+  showAlertMessage(message, color = "#ffffff", duration = 2200) {
     if (!message) return null;
     this._buildAlertHud();
     const tweenScale = Number(this.tweens?.timeScale);
@@ -1816,7 +1830,27 @@ export class GameUIScene extends Phaser.Scene {
   _buildAchievementBoard() {
     if (this.achievementBoard || !this.worldScene) return;
     this.achievementBoard = new AchievementBoard(this, this.worldScene);
+    if (!this._gameplayUiReady) {
+      this.achievementBoard.hideUntilDetailed?.();
+      this._achievementBoardAwaitingDetailedReveal = true;
+    }
     this.townXpHud?.refresh?.(true);
+  }
+
+  _maybeRevealAchievementBoardAfterDetailed(mode = null, duration = 180) {
+    if (!this.achievementBoard || !this._gameplayUiReady || !this._achievementBoardAwaitingDetailedReveal) return;
+    const nextMode = mode || this.worldScene?.zoomMixer?.mode || "detailed";
+    if (nextMode !== "detailed" || !this._isDetailedMode()) return;
+
+    const revealDelay = Math.max(0, Number(duration || 0));
+    this._achievementBoardRevealTimer?.remove?.(false);
+    this._achievementBoardRevealTimer = this.time.delayedCall(revealDelay, () => {
+      if (!this.achievementBoard || !this._isDetailedMode()) return;
+      this._achievementBoardAwaitingDetailedReveal = false;
+      this.achievementBoard.revealForDetailedMode?.();
+      this.townXpHud?.refresh?.(true);
+      this._achievementBoardRevealTimer = null;
+    });
   }
 
   _ensureTopHudHoverBubble() {
@@ -3510,6 +3544,7 @@ export class GameUIScene extends Phaser.Scene {
       this.alertHud,
       this.contractHud?.root,
       this.uiBottomBar?.ui,
+      this.productionStatusHud,
       this.raiderEdgeHud,
       this.pauseMenuButton,
       this.zoomControls,
@@ -5923,23 +5958,25 @@ export class GameUIScene extends Phaser.Scene {
     AudioManager.startBossRainAmbience({ volume: 0.3 });
   }
 
-  flashStormLightning(duration = 140, alpha = 0.36) {
+  flashStormLightning(duration = 180, alpha = 0.62) {
     if (!this._bossStorm) this.setBossStormActive(true);
     const flashRect = this._bossStorm?.flashRect;
     if (!flashRect) return;
+    const flashAlpha = Math.max(0.55, Number(alpha) || 0);
+    const flashDuration = Math.max(180, Number(duration) || 0);
     this.tweens.killTweensOf(flashRect);
     flashRect
       .setScrollFactor(0)
       .setDepth(this._bossStorm.flashDepth ?? ((UIDEPTH ?? 10) + 6000))
       .setPosition(this.scale.width / 2, this.scale.height / 2)
       .setSize(this.scale.width, this.scale.height)
-      .setAlpha(alpha)
+      .setAlpha(flashAlpha)
       .setVisible(true);
     this.children.bringToTop?.(flashRect);
     this.tweens.add({
       targets: flashRect,
       alpha: 0,
-      duration,
+      duration: flashDuration,
       ease: "Quad.easeOut",
     });
   }
@@ -5951,7 +5988,7 @@ export class GameUIScene extends Phaser.Scene {
       volume: 0.32 + Math.random() * 0.08,
       rate: 0.92 + Math.random() * 0.12,
     });
-    this.flashStormLightning(160, 0.3 + Math.random() * 0.18);
+    this.flashStormLightning(220, 0.62 + Math.random() * 0.16);
     this._drawBossStormThunderBolt(storm);
   }
 

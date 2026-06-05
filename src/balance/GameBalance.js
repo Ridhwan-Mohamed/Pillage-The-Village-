@@ -132,13 +132,11 @@ export function getTroopSellValue(troop, scene) {
 }
 
 export function canSellTroopsNow(scene) {
-  const world = getWorldScene(scene);
-  const phase = String(world?.clock?.getPhaseKey?.() || "").toLowerCase();
-  return !phase || phase === "dawn" || phase === "day";
+  return true;
 }
 
 export function getTroopSellLockMessage() {
-  return "Troops can only be sold during dawn or day.";
+  return "";
 }
 
 export function getStorageSellPrices() {

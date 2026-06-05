@@ -509,6 +509,10 @@ finalize() {
     return WallPlacementController._typeNameMatchesWallFamily(info?.name, family);
   }
 
+  _placedWallOrDoorAt(x, y) {
+    return !!GameMap._wallStructureInfoAt?.(x, y);
+  }
+
   _virtualWallTiles(previewBuildableCells = [], previewDoor = null) {
     const tiles = new globalThis.Map();
 
@@ -536,8 +540,8 @@ finalize() {
     const isDoor = typeName === "wall_door" || typeName === "woodWall_door";
     const solidAt = (gx, gy) => {
       const virtualType = virtualTiles?.get(`${gx},${gy}`) ?? null;
-      if (WallPlacementController._typeNameMatchesWallFamily(virtualType, family)) return true;
-      return this._placedWallMatchesFamily(gx, gy, family);
+      if (WallPlacementController._isWallFamilyTypeName(virtualType)) return true;
+      return this._placedWallOrDoorAt(gx, gy);
     };
 
     const up = solidAt(x, y - 1);
@@ -1201,14 +1205,9 @@ static _wallFamilyAt(mapGrid, x, y, family) {
 static doorAngleForCell(_gridIgnored, x, y, doorTypeName) {
   // Treat BOTH the wall and the door as “structure neighbors”
   // so orientation stays stable no matter which layer holds it.
-  const wallTypeName =
-    (doorTypeName === "woodWall_door") ? "woodWall" : "wall";
+  const hasSolid = (nx, ny) => !!GameMap._wallStructureInfoAt?.(nx, ny);
 
   // Consider a neighbor “solid” if it has a wall or a door.
-  const hasSolid = (nx, ny) =>
-    GameMap._hasTypeAt(nx, ny, wallTypeName) ||
-    GameMap._hasTypeAt(nx, ny, doorTypeName);
-
   const up    = hasSolid(x, y - 1);
   const down  = hasSolid(x, y + 1);
   const left  = hasSolid(x - 1, y);
@@ -1280,20 +1279,7 @@ static _removeStructureSourcesOn(node) {
 }
 
 static doorAngleForCell(_gridIgnored, x, y, doorTypeName) {
-  const wallTypeName =
-    (doorTypeName === "woodWall_door") ? "woodWall" : "wall";
-  const ownerTeam = GameMap._wallTeamAt?.(x, y);
-
-  const hasSolid = (nx, ny) => {
-    if (ownerTeam != null && GameMap._hasSameTeamWallAt?.(nx, ny, ownerTeam)) {
-      return true;
-    }
-
-    return (
-      GameMap._hasTypeAt(nx, ny, wallTypeName) ||
-      GameMap._hasTypeAt(nx, ny, doorTypeName)
-    );
-  };
+  const hasSolid = (nx, ny) => !!GameMap._wallStructureInfoAt?.(nx, ny);
 
   const up    = hasSolid(x, y - 1);
   const down  = hasSolid(x, y + 1);

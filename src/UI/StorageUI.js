@@ -29,6 +29,12 @@ export class StorageUI {
         return isOverviewMode(this.scene);
     }
 
+    static _offSceneUpdate(listener) {
+        if (typeof listener === 'function') {
+            this.scene?.events?.off('update', listener);
+        }
+    }
+
     static _eachStorage(fn) {
         for (const team of Object.values(Teams.teamLists || {})) {
             const storages = Array.isArray(team?.storageList) ? team.storageList : [];
@@ -184,7 +190,7 @@ export class StorageUI {
         const { container, updatePosition, tween } = storage.statusUI;
         tween?.remove();
         container?._overlayPopTween?.remove?.();
-        if (updatePosition) this.scene?.events?.off('update', updatePosition);
+        this._offSceneUpdate(updatePosition);
         container?.destroy();
         storage.statusUI = null;
     }
@@ -226,7 +232,7 @@ export class StorageUI {
         this.scene.events.on('update', updatePosition);
         panel._uiUpdate = updatePosition;
 
-        storage.minorUI = { root: panel, text, hiddenForOverview: false };
+        storage.minorUI = { root: panel, text, hiddenForOverview: false, updatePosition };
         animateOverlayPop(this.scene, panel, true, {
             duration: Math.max(0, Number(opts.duration ?? 140) || 0),
         });
@@ -246,7 +252,7 @@ export class StorageUI {
             const root = ui.root;
             const destroy = () => {
                 if (storage.minorUI !== ui) return;
-                if (root?._uiUpdate) this.scene.events.off('update', root._uiUpdate);
+                this._offSceneUpdate(ui.updatePosition || root?._uiUpdate);
                 root?._overlayPopTween?.remove?.();
                 root?.destroy?.();
                 storage.minorUI = null;

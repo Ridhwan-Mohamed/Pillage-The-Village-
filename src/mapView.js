@@ -5699,7 +5699,7 @@ setFarmInstructionPhase2(previewData) {
     this.farmInstrMid.setText(" - x");
     this.farmInstrSeedCount.setText(String(totalNeeded));
 
-    const enough = (this.seeds >= totalNeeded);
+    const enough = previewData?.enoughSeeds !== false;
     this.farmInstrSeedCount.setColor(enough ? "#00ff00" : "#ff4444");
 
     this.farmInstrRight.setText(
@@ -5774,10 +5774,57 @@ getPendingFarmTileKeySet() {
     return set;
 }
 
+getPendingFarmSeedAccounting(teamNumber = "1") {
+    const team = Teams.teamLists?.[`${teamNumber}`] ?? Teams.teamLists?.[teamNumber];
+    const pendingTasks = (team?.tileList || [])
+        .filter((task) => task && typeof task.x === "number" && typeof task.y === "number");
+    const pending = new Set(pendingTasks.map((task) => `${task.x},${task.y}`));
+    const reservedOrCommitted = new Set();
+    const seedItem = UI_ITEM_TYPES.seedCrop;
+
+    const markIfFarmTask = (task) => {
+        if (!task || !pending.has(`${task.x},${task.y}`)) return false;
+        reservedOrCommitted.add(task);
+        return true;
+    };
+
+    for (const troop of team?.playerList || []) {
+        if (!troop?.active) continue;
+        if (troop.pendingFarmSpot) {
+            markIfFarmTask(troop.pendingFarmSpot);
+            continue;
+        }
+        if (troop.task && StorageManager.isCarryingItem(troop, seedItem)) {
+            markIfFarmTask(troop.task);
+        }
+    }
+
+    for (const task of pendingTasks) {
+        const reserver = task.reservedBy;
+        if (reserver?.active) reservedOrCommitted.add(task);
+    }
+
+    const pendingNeedsStoredCount = pendingTasks.reduce(
+        (count, task) => count + (reservedOrCommitted.has(task) ? 0 : 1),
+        0
+    );
+    const availableStoredSeeds = StorageManager.getAvailableStoredItemCountForTeam(teamNumber, seedItem);
+    const availableNewSeeds = Math.max(0, availableStoredSeeds - pendingNeedsStoredCount);
+
+    return {
+        pending,
+        pendingCount: pending.size,
+        pendingNeedsStoredCount,
+        availableStoredSeeds,
+        availableNewSeeds,
+    };
+}
+
 getFarmSelectionPreviewData(minX, maxX, minY, maxY) {
-    const pending = this.getPendingFarmTileKeySet();
+    const seedAccounting = this.getPendingFarmSeedAccounting("1");
+    const pending = seedAccounting.pending;
     const cells = [];
-    const availableNewSeeds = Math.max(0, (this.seeds ?? 0) - pending.size);
+    const availableNewSeeds = seedAccounting.availableNewSeeds;
 
     const startX = Phaser.Math.Clamp(minX, 0, WORLD_DIMENSIONX - 1);
     const endX = Phaser.Math.Clamp(maxX, 0, WORLD_DIMENSIONX - 1);
@@ -5787,14 +5834,16 @@ getFarmSelectionPreviewData(minX, maxX, minY, maxY) {
     if (startX > endX || startY > endY) {
         return {
             pendingCount: pending.size,
+            pendingNeedsStoredCount: seedAccounting.pendingNeedsStoredCount,
+            availableStoredSeeds: seedAccounting.availableStoredSeeds,
             newCount: 0,
-            totalNeeded: pending.size,
-            cappedTotal: Math.min(pending.size, this.seeds ?? 0),
+            totalNeeded: 0,
+            cappedTotal: 0,
             plantableNewCount: 0,
             availableNewSeeds,
-            maxSeedsReached: pending.size > (this.seeds ?? 0),
+            maxSeedsReached: availableNewSeeds <= 0,
             validSelection: false,
-            enoughSeeds: pending.size <= this.seeds,
+            enoughSeeds: availableNewSeeds > 0,
             cells,
         };
     }
@@ -5850,11 +5899,13 @@ getFarmSelectionPreviewData(minX, maxX, minY, maxY) {
         }
     }
 
-    const totalNeeded = pending.size + newCount;
+    const totalNeeded = newCount;
     const plantableNewCount = Math.min(newCount, availableNewSeeds);
-    const cappedTotal = pending.size + plantableNewCount;
+    const cappedTotal = plantableNewCount;
     return {
         pendingCount: pending.size,
+        pendingNeedsStoredCount: seedAccounting.pendingNeedsStoredCount,
+        availableStoredSeeds: seedAccounting.availableStoredSeeds,
         newCount,
         totalNeeded,
         cappedTotal,
@@ -5862,13 +5913,13 @@ getFarmSelectionPreviewData(minX, maxX, minY, maxY) {
         availableNewSeeds,
         maxSeedsReached: totalNeeded > cappedTotal,
         validSelection: newCount > 0,
-        enoughSeeds: totalNeeded <= this.seeds,
+        enoughSeeds: newCount <= availableNewSeeds,
         cells,
     };
 }
 
 // Returns how many seeds we need if we confirm THIS rectangle,
-// INCLUDING already-queued (pending) tiles.
+// excluding already queued tiles.
 getFarmSelectionSeedCost(minX, maxX, minY, maxY) {
     const preview = this.getFarmSelectionPreviewData(minX, maxX, minY, maxY);
     return {
@@ -6232,7 +6283,7 @@ cancelFarmSelection(exitFarmMode = false) {
     }
 
     updateSeeds(amountDelta) {
-        this.seeds += amountDelta;
+        this.seeds = Math.max(0, Number(this.seeds || 0) + Number(amountDelta || 0));
         SaveManager.queueAutosave("seeds");
         if (this.uiScene?.onSeedsChanged) {
             this.uiScene.onSeedsChanged(amountDelta);
@@ -6275,7 +6326,7 @@ cancelFarmSelection(exitFarmMode = false) {
     }
 
     updateBerry(amountDelta) {
-        this.berries += amountDelta;
+        this.berries = Math.max(0, Number(this.berries || 0) + Number(amountDelta || 0));
         SaveManager.queueAutosave("berries");
         if (this.uiScene?.onBerryChanged) {
             this.uiScene.onBerryChanged(amountDelta);

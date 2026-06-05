@@ -88,7 +88,9 @@ export default class ClayOvenTab {
 
   destroy() {
     this._destroyed = true;
-    this.scene.events.off("update", this._update);
+    if (typeof this._update === "function") {
+      this.scene.events.off("update", this._update);
+    }
     this.scene.events.off("oven:updated", this._onOvenUpdated);
     this.scene.events.off("oven:added", this._onOvenAdded);
     this.scene.events.off("oven:removed", this._onOvenRemoved);

@@ -1,4 +1,5 @@
 import { Teams } from "../../Teams";
+import { SQUARESIZE } from "../../constants";
 import { TaskTicket } from "./TaskTicket";
 
 export class TaskBoard {
@@ -55,6 +56,15 @@ export class TaskBoard {
                 if (map.kind === "enemy_unit") {
                     const go = task?.gameObject || task?.target || task;
                     if (!go?.active || !go?.body) continue;
+                }
+                if (map.kind === "enemy_destroy_tile" && task.breachPlanId && task.breachTargetId && task.breachTargetTeam != null) {
+                    const targetTeam = Teams.teamLists?.[`${task.breachTargetTeam}`] ?? Teams.teamLists?.[task.breachTargetTeam];
+                    const activeTargetExists = (targetTeam?.playerList || []).some(unit => {
+                        if (!unit?.active) return false;
+                        const unitId = unit.id ?? unit.body?.id ?? `${Math.floor((unit.x ?? 0) / SQUARESIZE)},${Math.floor((unit.y ?? 0) / SQUARESIZE)}`;
+                        return unitId != null && String(unitId) === String(task.breachTargetId);
+                    });
+                    if (!activeTargetExists) continue;
                 }
 
                 const x = task.x ?? task.tx ?? 0;

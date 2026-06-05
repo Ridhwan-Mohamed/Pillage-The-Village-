@@ -422,7 +422,13 @@ export class Projectile {
     }
 
     static isFriendlyStructureHit(projectile, hit) {
-        return this.shouldIgnoreStructureForShot(projectile, hit);
+        const shotTeam = Number(this.getShotTeam(projectile));
+        const structureTeam = Number(this.getStructureTeam(hit));
+        return (
+            Number.isFinite(shotTeam) &&
+            Number.isFinite(structureTeam) &&
+            shotTeam === structureTeam
+        );
     }
 
     static getStructureIdentitySet(obj) {
@@ -574,6 +580,11 @@ export class Projectile {
 
     static handleStructureCollision(projectile, hit) {
         if (!Projectile.shouldCollideWithStructure(projectile, hit)) {
+            return;
+        }
+
+        if (Projectile.isFriendlyStructureHit(projectile, hit)) {
+            projectile.destroy();
             return;
         }
 

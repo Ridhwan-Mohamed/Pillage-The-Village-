@@ -876,7 +876,7 @@ function maybePlayAlertSound(targetScene, message, color) {
     });
 }
 
-export function showAlert(scene, message, color = '#ffffff', duration = 1400) {
+export function showAlert(scene, message, color = '#ffffff', duration = 2200) {
     const uiScene = scene?.uiScene
         || scene?.scene?.get?.('GameUIScene')
         || scene;

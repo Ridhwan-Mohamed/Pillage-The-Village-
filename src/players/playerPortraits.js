@@ -39,7 +39,7 @@ const PORTRAIT_ASSETS = {
   portrait_hunter: { asset: hunterPortrait, frameWidth: 62 },
   portrait_bomber: { asset: bomberPortrait, frameWidth: 62 },
   portrait_raider: { asset: raiderPortrait, frameWidth: 77 },
-  portrait_shocker: { asset: shockerPortrait, frameWidth: 62 },
+  portrait_shocker: { asset: shockerPortrait, frameWidth: 62, frameHeight: 57 },
 };
 
 const PORTRAIT_KEYS = {
@@ -92,7 +92,7 @@ export function preloadPlayerPortraits(scene) {
     if (scene.textures.exists(key)) return;
     scene.load.spritesheet(key, config.asset, {
       frameWidth: config.frameWidth,
-      frameHeight: PORTRAIT_FRAME_HEIGHT,
+      frameHeight: config.frameHeight ?? PORTRAIT_FRAME_HEIGHT,
     });
   });
 }
@@ -100,6 +100,7 @@ export function preloadPlayerPortraits(scene) {
 export function createPlayerPortraitAnimations(scene) {
   Object.keys(PORTRAIT_ASSETS).forEach((key) => {
     if (scene.anims.exists(key)) return;
+    if (!scene.textures.exists(key)) return;
 
     scene.anims.create({
       key,
@@ -136,6 +137,9 @@ export function applyPortraitKeyToSprite(scene, sprite, portraitKey, displayHeig
   const frameWidth = frame?.width ?? displayHeight;
   const frameHeight = frame?.height ?? displayHeight;
   const displayWidth = Math.round((frameWidth / frameHeight) * displayHeight);
+  if (!scene.anims?.exists?.(portraitKey) && scene.textures?.exists?.(portraitKey)) {
+    createPlayerPortraitAnimations(scene);
+  }
 
   sprite
     .setVisible(true)

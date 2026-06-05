@@ -48,6 +48,30 @@ export class StorageManager {
         }, 0);
     }
 
+    static getAvailableStoredItemCountForTeam(teamNumber, itemType) {
+        const team = this._getTeam(teamNumber);
+        const itemDef = typeof itemType === "string" ? UI_ITEM_TYPES[itemType] : itemType;
+        if (!team || !itemDef) return 0;
+
+        const storages = Array.isArray(team.storageList) ? team.storageList : [];
+        return storages.reduce((sum, storage) => {
+            if (typeof storage?.getAvailableForPickup === "function") {
+                return sum + Math.max(0, Number(storage.getAvailableForPickup(itemDef) || 0));
+            }
+            return sum + Math.max(0, Number(storage?.getItemCount?.(itemDef) || 0));
+        }, 0);
+    }
+
+    static getItemName(itemOrEntry) {
+        return itemOrEntry?.name ?? itemOrEntry?.item?.name ?? (typeof itemOrEntry === "string" ? itemOrEntry : null);
+    }
+
+    static isCarryingItem(troop, itemType) {
+        const expectedName = this.getItemName(itemType);
+        if (!troop?.carrying || !expectedName) return false;
+        return this.getItemName(troop.carrying) === expectedName;
+    }
+
     static _getStoredSlotsForTeam(teamNumber) {
         const team = this._getTeam(teamNumber);
         const storages = Array.isArray(team?.storageList) ? team.storageList : [];
@@ -482,13 +506,12 @@ export class StorageManager {
             return;
         }
 
-        // We successfully got one unit
-        DailyNeedsTracker.updateUIItems(task.item, 1, true);
+        // Storage-backed HUD counters resync from the storage:updated event emitted by removeItem().
         this.addCarriedItem(troop, task.item);
 
         if (troop.isFireman) {
             // 🔥 fuel run: wood for an oven fuel job
-            if (troop.pendingFuelJob && troop.carrying === UI_ITEM_TYPES.wood) {
+            if (troop.pendingFuelJob && this.isCarryingItem(troop, UI_ITEM_TYPES.wood)) {
                 if (!Fireman.goRefuelOven(troop, troop.pendingFuelJob)) {
                     this.tryCreateStorageDeliveryTask(troop);
                 }
@@ -521,9 +544,10 @@ export class StorageManager {
                 if(!canFarm){
                     console.error("Failed to farm after seed pickup, FARM PATH ERROR")
                     StorageManager.tryCreateStorageDeliveryTask(troop);
-                    troop.pendingFarmSpot.assigned = 0;
+                    plot.assigned = 0;
                     troop.pendingFarmSpot = null;
                     troop.task = null;
+                    return;
                 }
                 this.scene.enableTillFlash(plot.x, plot.y);
                 return;

@@ -503,8 +503,10 @@ export class StorageBuilding {
     }
 
     getItemCount(itemType) {
+        const itemName = typeof itemType === "string" ? itemType : itemType?.name;
+        if (!itemName) return 0;
         return this.storageItems
-            .filter(slot => slot && slot.item === itemType)
+            .filter(slot => slot && slot.item?.name === itemName)
             .reduce((sum, slot) => sum + slot.amount, 0);
     }
 
@@ -670,8 +672,8 @@ export class StorageBuilding {
             this.collider = null;
         }
 
-        buildingManager.clearBlockFootprint?.(this.x, this.y, this.tileType);
-        buildingManager.removeBuildingFromArray?.(this.x, this.y);
+        buildingManager.cleanupDestroyedBlockBuilding?.(this, this.x, this.y, this.tileType);
+        buildingManager.playBuildingCollapseSfxOnce?.(this, { volume: 0.3 });
         Teams.removeFromStateArray(this.teamNumber, 'storageList', this);
         StorageManager.handleStorageDestroyed?.(this);
 

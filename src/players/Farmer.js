@@ -28,6 +28,7 @@ export class Farmer {
     static speed = 85;
     static stamina = 0.005;
     static maxWaterPailCarry = 2;
+    static maxWaterPailCarryCap = 4;
     static WATER_ASSIGN_FAILURE_COOLDOWN_MS = 2200;
     static WATER_SOURCE_CANDIDATE_LIMIT = 12;
 
@@ -115,6 +116,8 @@ export class Farmer {
     }
  
     static update(troop){
+        this.clampWaterBucket(troop);
+
         // If currently fleeing, only maintain flee behaviour
         if (troop.state === CONTROL_STATES.FLEE_MODE) {
             Player.updateTracking(troop);   // can drop back to TRACK_MODE when safe
@@ -142,9 +145,8 @@ export class Farmer {
         const teamData = Teams.teamLists[troop.body.team];
         if (!teamData) return false;
 
-        const carrying = troop.carrying;
         const seedItemType = UI_ITEM_TYPES.seedCrop;
-        const carryingSeeds = carrying && carrying === seedItemType;
+        const carryingSeeds = StorageManager.isCarryingItem(troop, seedItemType);
 
         const reserveAndFetch = (spot) => {
             if (!spot) return false;
@@ -187,7 +189,7 @@ export class Farmer {
     }
 
     static tryAssignWaterWork(troop, preferredCrop = null) {
-        if (!Number(troop.waterBucket?.count || 0)) {
+        if (!this.clampWaterBucket(troop)) {
             return this.assignWaterTask(troop);
         }
         if (preferredCrop) {
@@ -329,6 +331,30 @@ export class Farmer {
         return true;
     }
 
+    static getWaterPailCapacity() {
+        const rawCapacity = Math.floor(Number(this.maxWaterPailCarry) || 0);
+        return Math.max(1, Math.min(this.maxWaterPailCarryCap, rawCapacity));
+    }
+
+    static clampWaterBucket(troop) {
+        if (!troop) return 0;
+        const capacity = this.getWaterPailCapacity();
+        const count = Math.floor(Number(troop.waterBucket?.count || 0));
+        const clamped = Math.max(0, Math.min(capacity, count));
+        if (!troop.waterBucket || typeof troop.waterBucket !== "object") {
+            troop.waterBucket = { count: clamped };
+        } else {
+            troop.waterBucket.count = clamped;
+        }
+        return clamped;
+    }
+
+    static fillWaterBucket(troop) {
+        if (!troop) return 0;
+        const count = this.getWaterPailCapacity();
+        troop.waterBucket = { count };
+        return count;
+    }
 
     static handleStorageDropoff(troop) {
         const task = troop.task;
@@ -344,7 +370,7 @@ export class Farmer {
     }
     
     static giveTroopWater(sprite){
-        sprite.waterBucket = { count: this.maxWaterPailCarry };
+        this.fillWaterBucket(sprite);
         sprite.task = null;
         AudioManager.playWaterPickup();
         Teams.movePlayerState(sprite, CONTROL_STATES.TRACK_MODE);

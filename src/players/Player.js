@@ -297,9 +297,11 @@ export class Player {
         }
 
         if (troop?.isFarmer && Number(troop?.waterBucket?.count) > 0) {
+            const count = troop.type?.clampWaterBucket?.(troop) ?? Number(troop.waterBucket.count || 0);
+            if (count <= 0) return null;
             return {
                 iconKey: UI_ITEM_TYPES.unclean_water.icon,
-                count: troop.waterBucket.count,
+                count,
                 showCount: true,
             };
         }
@@ -2585,11 +2587,50 @@ export class Player {
 
     static _cleanupCombatTicketForTarget(teamNumber, target) {
         const list = Teams.teamLists?.[`${teamNumber}`]?.fightingList;
+        if (Array.isArray(list) && target) {
+            for (let i = list.length - 1; i >= 0; i--) {
+                const t = list[i];
+                const tgt = t?.target || t;
+                if (!tgt?.active || tgt === target) list.splice(i, 1);
+            }
+        }
+        this._cleanupBreachTicketsForTarget(teamNumber, target);
+    }
+
+    static _removeEnemyDestroyTileTask(team, list, index) {
+        const task = list[index];
+        list.splice(index, 1);
+        if (task?.breachPlanId && team?._breachSeen) {
+            team._breachSeen.delete(`${task.x},${task.y}`);
+        }
+    }
+
+    static _cleanupBreachTicketsForTarget(teamNumber, target) {
+        const team = Teams.teamLists?.[`${teamNumber}`];
+        const list = team?.enemyDestroyTileStates;
         if (!Array.isArray(list) || !target) return;
+
+        const targetId = this._combatTargetId(target);
         for (let i = list.length - 1; i >= 0; i--) {
-            const t = list[i];
-            const tgt = t?.target || t;
-            if (!tgt?.active || tgt === target) list.splice(i, 1);
+            const task = list[i];
+            if (!task?.breachPlanId) continue;
+            if (targetId && task.breachTargetId === targetId) {
+                this._removeEnemyDestroyTileTask(team, list, i);
+            }
+        }
+    }
+
+    static _cleanupBreachTicketsForTroop(teamNumber, troop) {
+        const team = Teams.teamLists?.[`${teamNumber}`];
+        const list = team?.enemyDestroyTileStates;
+        if (!Array.isArray(list) || !troop) return;
+
+        for (let i = list.length - 1; i >= 0; i--) {
+            const task = list[i];
+            if (!task?.breachPlanId) continue;
+            if (Array.isArray(task.eligibleTroopIds) && task.eligibleTroopIds.includes(troop.id)) {
+                this._removeEnemyDestroyTileTask(team, list, i);
+            }
         }
     }
 
@@ -2990,6 +3031,8 @@ export class Player {
                 forced: !!troop.forcedTarget,
                 type: TILE_TYPES[typeName],
                 breachPlanId,
+                breachTargetId: this._combatTargetId(target),
+                breachTargetTeam: target.body?.team ?? null,
                 breachOrder: i,
                 breachChainLength: breachTiles.length,
                 eligibleTroopIds: [troop.id],

@@ -891,9 +891,6 @@ export default class PlayerTab {
             sourceUiTarget: this.detailCard?.sellButton ?? null,
         });
         if (!result.ok) {
-            if (result.reason === "phase_locked") {
-                showAlert?.(this.scene, result.message || "Troops can only be sold during dawn or day.", '#ff7777', 1800);
-            }
             if (s.active) this.paintDetails(s);
             return;
         }

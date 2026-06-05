@@ -60,6 +60,11 @@ export class fightManager{
     static disengageFromCombat(sprite, reason = "combat_target_lost") {
         if (!sprite) return false;
 
+        const shouldReturnToTrackMode =
+            sprite.state === CONTROL_STATES.TRACK_TARGET ||
+            sprite.state === CONTROL_STATES.ATTACK_MODE ||
+            sprite.taskMeta?.state === CONTROL_STATES.TRACK_TARGET;
+
         if (sprite.taskMeta?.state === CONTROL_STATES.TRACK_TARGET) {
             InterruptController.interruptTroop(sprite, reason, CONTROL_STATES.TRACK_MODE);
         }
@@ -74,11 +79,12 @@ export class fightManager{
         Player.resetRoamState(sprite);
         Player.clearRecentCombatAttacker?.(sprite);
         Player.clearGunslingerKiteState?.(sprite);
+        Player._cleanupBreachTicketsForTroop?.(sprite.body?.team, sprite);
         sprite.track = null;
         sprite.forcedTarget = null;
         sprite.currentPath?.splice?.(0);
         sprite.body?.setVelocity?.(0, 0);
-        if (sprite.state === CONTROL_STATES.TRACK_TARGET) {
+        if (shouldReturnToTrackMode && sprite.state !== CONTROL_STATES.TRACK_MODE) {
             Teams.movePlayerState(sprite, CONTROL_STATES.TRACK_MODE);
         }
         Player.setAnimState(sprite, sprite.idle);

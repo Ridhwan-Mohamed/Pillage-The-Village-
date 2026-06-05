@@ -567,6 +567,8 @@ export class House {
         if (this.lightId)  VisibilitySystem.removeLightById(this.lightId);
         destroyStructuralHealthBar(this);
         this.sleepFxContainer?.destroy();
+        buildingManager.cleanupDestroyedBlockBuilding?.(this, this.x, this.y, this.tileType);
+        buildingManager.playBuildingCollapseSfxOnce?.(this, { volume: 0.32 });
         playBuildingCollapseSmoke(this);
         Map.removeStructureBarrier(this.collider);
         this.collider = null;

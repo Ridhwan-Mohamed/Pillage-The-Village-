@@ -31,8 +31,8 @@ export class ClayOven {
         return !oven?.outputSlots?.[slotIndex];
     }
 
-    constructor(x, y, teamNumber) {
-        this.teamNumber = teamNumber;
+    constructor(x, y, teamNumber, opts = {}) {
+        this.teamNumber = Number(teamNumber ?? 1) || 1;
         const item = TILE_TYPES.clayOven
         this.tileType = item;
         this.sprite = Map.addToWorldStatic(
@@ -53,10 +53,16 @@ export class ClayOven {
             }
         );
         if (this.collider) this.collider.isBuilding = true;
-        Map.drawRoadAround(x,y,item,teamNumber)
+        Map.drawRoadAround(x,y,item,this.teamNumber)
         Map.addBlockItem(x,y,item)
+        if (opts.applyNavUpdate) {
+            buildingManager.blockBuildingFootprintInLiveNav?.(this, {
+                evacuateTeamNumber: this.teamNumber,
+                warningLabel: "clay oven footprint",
+            });
+        }
 
-        if(teamNumber == 1){
+        if(this.teamNumber === 1){
             const cx = x + Math.floor(item.lenX/2);
             const cy = y + Math.floor(item.lenY/2);
             // Vision bubble: small boost over ambient
@@ -83,8 +89,8 @@ export class ClayOven {
 
         this.sprite.buildingRef = this;
 
-        Teams.teamLists[teamNumber].ovenList.push(this);
-        Teams.teamLists[teamNumber].buildings.push([x, y, TILE_TYPES.clayOven, this.sprite])
+        Teams.teamLists[this.teamNumber].ovenList.push(this);
+        Teams.teamLists[this.teamNumber].buildings.push([x, y, TILE_TYPES.clayOven, this.sprite])
 
         this.cookingSlots = Array.from({ length: ClayOven.slotCount }, () => null); // { item: UI_ITEM_TYPES.*, amount: number }
         this.outputSlots = Array.from({ length: ClayOven.slotCount }, () => null);  // same structure
@@ -839,6 +845,8 @@ export class ClayOven {
         this.clearStoredContents();
         ClayOven.scene.events.emit('oven:removed', this);
         destroyStructuralHealthBar(this);
+        buildingManager.cleanupDestroyedBlockBuilding?.(this, this.x, this.y, this.tileType);
+        buildingManager.playBuildingCollapseSfxOnce?.(this, { volume: 0.3 });
         playBuildingCollapseSmoke(this, { scene: ClayOven.scene });
         Map.removeStructureBarrier(this.collider);
         this.collider = null;

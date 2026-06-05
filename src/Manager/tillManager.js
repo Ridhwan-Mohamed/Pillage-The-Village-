@@ -179,7 +179,8 @@ export class tillManager {
         sprite.timer = this.scene.time.delayedCall(getMarketWorkDuration(sprite, 1000), () => {
             if(!sprite.active || sprite.state != CONTROL_STATES.WATER_CROPS_MODE) return;
             //function needed here for setting dailywatered state to true here
-            sprite.waterBucket.count = Math.max(0, sprite.waterBucket.count - 1);
+            const waterCount = sprite.type?.clampWaterBucket?.(sprite) ?? Number(sprite.waterBucket?.count || 0);
+            sprite.waterBucket.count = Math.max(0, waterCount - 1);
             Teams.markCropWatered(sprite.body.team, x, y)
                 // === Sparkle effect at crop location ===
             Teams.removeFromStateArray(sprite.body.team, "wateringList", sprite.task);

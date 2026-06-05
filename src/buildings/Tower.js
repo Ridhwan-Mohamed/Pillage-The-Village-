@@ -458,10 +458,14 @@ export class TowerBuilding {
 
     // Collapse visually like other buildings: smoke at the footprint, then remove the tower art.
     if (this.sprite?.active) {
+      buildingManager.cleanupDestroyedBlockBuilding?.(this, this.x, this.y, this.tileType);
+      buildingManager.playBuildingCollapseSfxOnce?.(this, { volume: 0.34 });
       playBuildingCollapseSmoke(this);
       this.sprite._destroyed = true;
       this.sprite.disableInteractive();
       this.sprite.destroy();
+    } else {
+      buildingManager.cleanupDestroyedBlockBuilding?.(this, this.x, this.y, this.tileType);
     }
 
     if (this.isTownTower && !TowerBuilding.hasLivingTownTowers(this.team)) {

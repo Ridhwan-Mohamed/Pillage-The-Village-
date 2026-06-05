@@ -37,6 +37,7 @@ import { getRunStoreUnlockKeys, grantHordeUnlockCatchup } from './parcel_system/
 import { resetStoreUnlocks } from './parcel_system/StoreUnlockSystem.js';
 import { SaveManager } from './save/SaveManager.js';
 import { prepareSnapshotWorldForBoot } from './save/RunSnapshotLoader.js';
+import { resetCardModifiedDefaults } from './save/saveAdapters.js';
 import { Scheduler } from './ai/scheduler/Scheduler.js';
 import { OrderRunner } from './orders/OrderRunner.js';
 import { AudioManager } from './Manager/AudioManager.js';
@@ -1025,7 +1026,7 @@ export class MainMenu {
             fontSize: '18px',
             fill: '#ffffff',
             fontStyle: 'bold',
-            fontFamily: 'Bungee',
+            fontFamily: 'Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif',
             stroke: '#071320',
             strokeThickness: 4,
         }).setOrigin(1,1);
@@ -1625,9 +1626,15 @@ export class MainMenu {
             overlayScene.scale.off('resize', scene._mainMenuResizeHandler);
             scene._mainMenuResizeHandler = null;
             scene._mainMenuResizeOverlayScene = null;
-            overlayScene.input.off('pointermove', scene._mainMenuParallaxPointerHandler);
-            overlayScene.input.off('gameout', scene._mainMenuParallaxOutHandler);
-            overlayScene.events.off('update', scene._mainMenuParallaxUpdateHandler);
+            if (typeof scene._mainMenuParallaxPointerHandler === 'function') {
+                overlayScene.input.off('pointermove', scene._mainMenuParallaxPointerHandler);
+            }
+            if (typeof scene._mainMenuParallaxOutHandler === 'function') {
+                overlayScene.input.off('gameout', scene._mainMenuParallaxOutHandler);
+            }
+            if (typeof scene._mainMenuParallaxUpdateHandler === 'function') {
+                overlayScene.events.off('update', scene._mainMenuParallaxUpdateHandler);
+            }
             scene._mainMenuParallaxInputScene = null;
             scene._mainMenuParallaxUpdateScene = null;
             scene._mainMenuParallaxPointerHandler = null;
@@ -2222,6 +2229,10 @@ export class MainMenu {
             : (Array.isArray(MainMenu.selectedStartKit?.cards)
                 ? MainMenu.selectedStartKit.cards.slice(0, 3)
                 : (Array.isArray(t1?.startKit?.cards) ? t1.startKit.cards.slice(0, 3) : null));
+
+        if (!isContinue) {
+            resetCardModifiedDefaults();
+        }
 
         if (startCfg && !isContinue) {
             // team name
