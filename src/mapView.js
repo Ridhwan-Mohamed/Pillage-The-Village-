@@ -97,7 +97,7 @@ import { hasStoreUnlock, STORE_UNLOCK_KEYS, unlockStoreItem } from './parcel_sys
 import { createPlayerPortraitAnimations, getPlayerPortraitKey, preloadPlayerPortraits } from './players/playerPortraits.js';
 import { getHordeModifierForIndex } from './parcel_system/HordeModifiers.js';
 import { addCardToHand, getCardHand } from './UI/Powerups.js';
-import { addCardToInventory, ensureCardInventory } from './Cards/CardInventory.js';
+import { addCardToInventory, buildCardAddedPayload, ensureCardInventory } from './Cards/CardInventory.js';
 import { UI_ITEM_TYPES } from './UI/UIConstants.js';
 import { SaveManager } from './save/SaveManager.js';
 import { AchievementSystem } from './achievements/AchievementSystem.js';
@@ -493,6 +493,12 @@ export class mapView extends Phaser.Scene {
         this.cropHoverCardLabel = null;
         this.cropHoverCardTarget = null;
         this.cropHoverCardSize = { width: 0, height: 0 };
+        this.wallHoverCard = null;
+        this.wallHoverCardBg = null;
+        this.wallHoverCardIcon = null;
+        this.wallHoverCardLabel = null;
+        this.wallHoverCardTarget = null;
+        this.wallHoverCardSize = { width: 0, height: 0 };
         this._foragerRouteAssistSignature = "";
         this._foragerRouteLastDrawAt = 0;
         this.harvestMode = false;
@@ -1607,7 +1613,10 @@ export class mapView extends Phaser.Scene {
             panelColor: 0x17324c,
             grant: () => {
                 addCardToInventory(card, TOWN_XP_TEAM_ID, 1);
-                this.events.emit("cards:updated");
+                this.events.emit("cards:updated", buildCardAddedPayload(card, {
+                    teamNumber: TOWN_XP_TEAM_ID,
+                    source: "town_reward",
+                }));
                 showAlert(this, `Town reward: ${card.name}`, "#8fe7ff");
                 SaveManager.queueAutosave("town_xp_market_item");
             },
@@ -2003,7 +2012,10 @@ export class mapView extends Phaser.Scene {
             panelColor: 0x17324c,
             grant: () => {
                 addCardToHand(card, TOWN_XP_TEAM_ID);
-                this.events.emit("cards:updated");
+                this.events.emit("cards:updated", buildCardAddedPayload(card, {
+                    teamNumber: TOWN_XP_TEAM_ID,
+                    source: "town_reward",
+                }));
                 showAlert(this, `Town reward: ${card.name}`, "#8fe7ff");
             },
         };
@@ -4080,6 +4092,7 @@ export class mapView extends Phaser.Scene {
         this.input.on("pointermove", (pointer) => {
             this._updateForagerRouteHoverCardPosition(pointer);
             this._updateCropHoverCardPosition(pointer);
+            this._updateWallHoverCardPosition(pointer);
             if (this.marketCardUseController?.active) this.marketCardUseController.onPointerMove(pointer);
             if (this.wallPlacer?.active) this.wallPlacer.onPointerMove(pointer);
             if (this.wallDestroyer?.active) this.wallDestroyer.onPointerMove(pointer);
@@ -4203,6 +4216,9 @@ export class mapView extends Phaser.Scene {
                 }
                 const placed = OrderRunner.issuePendingGatherPlacement(Player.selected, pointer.worldX, pointer.worldY);
                 if (placed) return;
+            }
+            else if (this._tryIssueOverviewForagerRoute(pointer, cam)) {
+                return;
             }
             else if (
                 this._canUseSelectionDrag(pointer, clickedInteractiveWorldObject, clickedOnPlayer)
@@ -4925,6 +4941,65 @@ export class mapView extends Phaser.Scene {
         return nodes;
     }
 
+    _isPointerOnOverviewIcon(pointer, cam = this.cameras?.main) {
+        const iconChildren = ZoomMixer.mapIconContainer?.list || [];
+        if (!iconChildren.length) return false;
+
+        return this.input.manager
+            .hitTest(pointer, iconChildren, cam)
+            .some((obj) => obj?.input?.enabled);
+    }
+
+    _findForagerRouteNodeAtWorld(worldX, worldY) {
+        if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) return null;
+
+        const gridX = Math.floor(worldX / SQUARESIZE);
+        const gridY = Math.floor(worldY / SQUARESIZE);
+        let best = null;
+
+        this._getForagerRouteNodes().forEach((node) => {
+            const type = this._getForagerRouteNodeResourceType(node);
+            if (!FORAGER_ROUTE_RESOURCE_UI[type]) return;
+
+            const gx = Math.floor(Number(node?.gridX ?? node?.task?.x ?? 0));
+            const gy = Math.floor(Number(node?.gridY ?? node?.task?.y ?? 0));
+            const width = Math.max(1, Math.ceil(Number(
+                node?.footprintW ?? node?.resourceTileType?.lenX ?? node?.task?.type?.lenX ?? 1
+            )));
+            const height = Math.max(1, Math.ceil(Number(
+                node?.footprintH ?? node?.resourceTileType?.lenY ?? node?.task?.type?.lenY ?? 1
+            )));
+
+            if (gridX < gx || gridX >= gx + width || gridY < gy || gridY >= gy + height) return;
+
+            const center = OrderRunner._nodeWorldCenter?.(node) || {
+                x: (gx + width / 2) * SQUARESIZE,
+                y: (gy + height / 2) * SQUARESIZE,
+            };
+            const dx = worldX - center.x;
+            const dy = worldY - center.y;
+            const score = dx * dx + dy * dy;
+
+            if (!best || score < best.score) {
+                best = { node, type, score };
+            }
+        });
+
+        return best;
+    }
+
+    _tryIssueOverviewForagerRoute(pointer, cam = this.cameras?.main) {
+        if (this.zoomMixer?.mode !== "overview") return false;
+        if (pointer?.button !== 0) return false;
+        if (this._isPointerOnOverviewIcon(pointer, cam)) return false;
+        if (!this._getForagerRouteSelectionProfile()) return false;
+
+        const match = this._findForagerRouteNodeAtWorld(pointer.worldX, pointer.worldY);
+        if (!match) return false;
+
+        return this.tryIssueForagerRouteToNode(match.node, match.type);
+    }
+
     _ensureForagerRouteGlow() {
         if (this.foragerRouteGlow?.scene) return this.foragerRouteGlow;
         this.foragerRouteGlow?.destroy?.();
@@ -4936,7 +5011,9 @@ export class mapView extends Phaser.Scene {
 
     _drawForagerRouteAssist(force = false) {
         const profile = this._getForagerRouteSelectionProfile();
+        const routeMode = this.zoomMixer?.mode || "detailed";
         const signature = [
+            routeMode,
             this._foragerRouteSelectionSignature(profile),
             this.foragerRouteHoverType || "all",
             this.foragerRouteHoverNode ? `${this.foragerRouteHoverNode.gridX},${this.foragerRouteHoverNode.gridY}` : "",
@@ -4953,7 +5030,7 @@ export class mapView extends Phaser.Scene {
         const glow = this._ensureForagerRouteGlow();
         glow.clear();
 
-        if (!profile) {
+        if (routeMode === "overview" || !profile) {
             glow.setVisible(false);
             this.hideForagerRouteInstruction();
             return;
@@ -5527,6 +5604,221 @@ export class mapView extends Phaser.Scene {
 
         const width = Math.max(0, Number(this.cropHoverCardSize?.width || 0));
         const height = Math.max(0, Number(this.cropHoverCardSize?.height || 0));
+        const margin = 10;
+        let x = Number(p.x || 0) + 18;
+        let y = Number(p.y || 0) - height - 16;
+
+        if (x + width > this.scale.width - margin) {
+            x = Math.max(margin, Number(p.x || 0) - width - 16);
+        }
+        if (y < margin) {
+            y = Math.min(this.scale.height - height - margin, Number(p.y || 0) + 18);
+        }
+
+        card.setPosition(
+            Phaser.Math.Clamp(x, margin, Math.max(margin, this.scale.width - width - margin)),
+            Phaser.Math.Clamp(y, margin, Math.max(margin, this.scale.height - height - margin)),
+        );
+    }
+
+    _ensureWallHoverCard() {
+        if (
+            this.wallHoverCard?.active &&
+            this.wallHoverCardBg?.scene &&
+            this.wallHoverCardIcon?.scene &&
+            this.wallHoverCardLabel?.scene
+        ) {
+            return;
+        }
+
+        this.wallHoverCard?.destroy?.(true);
+        this.wallHoverCard = this.add.container(0, 0)
+            .setDepth(UIDEPTH + 913)
+            .setScrollFactor(0)
+            .setVisible(false)
+            .setAlpha(0)
+            .setScale(0.94);
+        this.wallHoverCardBg = this.add.graphics().setScrollFactor(0);
+        this.wallHoverCardIcon = this.add.sprite(0, 0, "wall_interior", 0)
+            .setOrigin(0.5)
+            .setScrollFactor(0);
+        this.wallHoverCardLabel = this.add.text(0, 0, "", {
+            fontFamily: "Barlow Semi Condensed",
+            fontSize: "15px",
+            fontStyle: "bold",
+            color: "#f7fbff",
+            stroke: "#06111a",
+            strokeThickness: 3,
+            align: "left",
+            lineSpacing: 2,
+        }).setOrigin(0, 0.5).setScrollFactor(0);
+
+        this.wallHoverCard.add([
+            this.wallHoverCardBg,
+            this.wallHoverCardIcon,
+            this.wallHoverCardLabel,
+        ]);
+    }
+
+    _resolveWallHoverTarget(target = null) {
+        const sprite = target?.sprite || target || null;
+        if (!sprite?.scene || sprite.active === false) return null;
+        return sprite;
+    }
+
+    _resolveWallHoverState(target = null) {
+        const sprite = this._resolveWallHoverTarget(target);
+        if (!sprite) return null;
+
+        const wall = sprite.wallRef || target?.wallRef || (target?.sprite === sprite ? target : null);
+        if (!wall || wall.active === false) return null;
+        return wall;
+    }
+
+    _describeWallHover(wall = null) {
+        const materialLabel = wall?.material === "wood" ? "Wood" : "Stone";
+        const objectLabel = wall?.isDoor ? "Door" : "Wall";
+        const maxHp = Math.max(1, Math.round(Number(wall?.maxHp ?? wall?.maxHealth ?? 1) || 1));
+        const hp = Math.max(0, Math.round(Number(wall?.hp ?? wall?.health ?? maxHp) || 0));
+        const ratio = Phaser.Math.Clamp(hp / maxHp, 0, 1);
+        const healthLabel = ratio <= 0.33 ? "Critical" : ratio <= 0.66 ? "Damaged" : "Healthy";
+        const accentColor = ratio <= 0.33
+            ? 0xf87171
+            : ratio <= 0.66
+                ? 0xfbbf24
+                : (wall?.material === "wood" ? 0xd08b45 : 0x94a3b8);
+        const sprite = wall?.sprite || null;
+        const rawFrame = Number(sprite?.frame?.name ?? sprite?.frame?.index ?? (wall?.phase ?? 0));
+        const frame = Number.isFinite(rawFrame) ? rawFrame : 0;
+
+        return {
+            textureKey: wall?.isDoor ? wall?.doorKey : wall?.baseKey,
+            fallbackTextureKey: sprite?.texture?.key,
+            frame,
+            accentColor,
+            text: `${materialLabel} ${objectLabel}\nHealth: ${hp}/${maxHp} | ${healthLabel}`,
+        };
+    }
+
+    showWallHoverCard(target, pointer = null) {
+        const wall = this._resolveWallHoverState(target);
+        if (!wall) return;
+
+        this._ensureWallHoverCard();
+        const card = this.wallHoverCard;
+        const bg = this.wallHoverCardBg;
+        const icon = this.wallHoverCardIcon;
+        const label = this.wallHoverCardLabel;
+        if (!card || !bg || !icon || !label) return;
+
+        const summary = this._describeWallHover(wall);
+        const iconSize = 24;
+        const gap = 11;
+        const padX = 13;
+        const padY = 10;
+
+        label.setText(summary.text).setColor("#f7fbff");
+        const iconKey = summary.textureKey || summary.fallbackTextureKey;
+        if (iconKey && this.textures.exists(iconKey)) {
+            icon.setTexture(iconKey, summary.frame).setVisible(true).setDisplaySize(iconSize, iconSize);
+        } else {
+            icon.setVisible(false);
+        }
+
+        const contentWidth = (icon.visible ? iconSize + gap : 0) + label.width;
+        const width = Math.max(172, Math.round(contentWidth + padX * 2));
+        const height = Math.max(58, Math.round(Math.max(icon.visible ? iconSize : 0, label.height) + padY * 2));
+        const radius = 15;
+
+        bg.clear();
+        bg.fillStyle(0x0d2534, 0.96);
+        bg.fillRoundedRect(0, 0, width, height, radius);
+        bg.fillStyle(0xffffff, 0.08);
+        bg.fillRoundedRect(3, 3, width - 6, Math.max(12, Math.round(height * 0.34)), Math.max(8, radius - 6));
+        bg.lineStyle(2, summary.accentColor, 0.9);
+        bg.strokeRoundedRect(0, 0, width, height, radius);
+        bg.lineStyle(1, 0xffffff, 0.18);
+        bg.strokeRoundedRect(3, 3, width - 6, height - 6, Math.max(8, radius - 4));
+
+        if (icon.visible) {
+            icon.setPosition(padX + (iconSize / 2), height / 2);
+        }
+        label.setPosition(padX + (icon.visible ? iconSize + gap : 0), height / 2);
+
+        const targetSprite = wall.sprite || this._resolveWallHoverTarget(target);
+        const sameTarget = this.wallHoverCardTarget === targetSprite;
+        this.wallHoverCardTarget = targetSprite;
+        this.wallHoverCardSize = { width, height };
+
+        this.tweens.killTweensOf(card);
+        if (!card.visible || !sameTarget) {
+            card.setVisible(true).setAlpha(0).setScale(0.94);
+            this.tweens.add({
+                targets: card,
+                alpha: 1,
+                scaleX: 1,
+                scaleY: 1,
+                duration: 120,
+                ease: "Quad.easeOut",
+            });
+        } else {
+            card.setVisible(true).setAlpha(1).setScale(1);
+        }
+
+        this._updateWallHoverCardPosition(pointer);
+    }
+
+    hideWallHoverCard(target = null, { immediate = false } = {}) {
+        const targetSprite = this._resolveWallHoverTarget(target);
+        if (targetSprite && this.wallHoverCardTarget !== targetSprite) return;
+
+        const card = this.wallHoverCard;
+        if (!card) return;
+
+        this.wallHoverCardTarget = null;
+        this.tweens.killTweensOf(card);
+
+        if (immediate || !card.visible) {
+            card.setVisible(false).setAlpha(0).setScale(0.94);
+            return;
+        }
+
+        this.tweens.add({
+            targets: card,
+            alpha: 0,
+            scaleX: 0.95,
+            scaleY: 0.95,
+            duration: 100,
+            ease: "Quad.easeIn",
+            onComplete: () => {
+                if (!this.wallHoverCardTarget) {
+                    card.setVisible(false).setScale(0.94);
+                }
+            },
+        });
+    }
+
+    _updateWallHoverCardPosition(pointer = null) {
+        const card = this.wallHoverCard;
+        if (!card?.visible) return;
+
+        const target = this.wallHoverCardTarget;
+        if (!target?.scene || target.active === false || target.wallRef?.active === false) {
+            this.hideWallHoverCard(target, { immediate: true });
+            return;
+        }
+
+        const wall = target.wallRef || null;
+        if (wall) {
+            const summary = this._describeWallHover(wall);
+            this.wallHoverCardLabel?.setText(summary.text);
+        }
+
+        const p = pointer || this.input?.activePointer || null;
+        if (!p) return;
+
+        const width = Math.max(0, Number(this.wallHoverCardSize?.width || 0));
+        const height = Math.max(0, Number(this.wallHoverCardSize?.height || 0));
         const margin = 10;
         let x = Number(p.x || 0) + 18;
         let y = Number(p.y || 0) - height - 16;
@@ -6451,6 +6743,7 @@ cancelFarmSelection(exitFarmMode = false) {
             this._syncShockerBossUi();
         }
         this._updateCropHoverCardPosition();
+        this._updateWallHoverCardPosition();
         this.updateForagerRouteAssist();
         ClayOvenUI.updateAllOvens(effectiveSimSpeed);
         this._refreshNorthFortArrivalMarker();

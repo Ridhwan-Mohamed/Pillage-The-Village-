@@ -1,5 +1,6 @@
 import { House } from "../buildings/House";
 import { pickRandomPowerupCards } from "../Cards/PowerupCards.js";
+import { buildCardAddedPayload } from "../Cards/CardInventory";
 import { showAlert, UIDEPTH } from "../constants";
 import { buildingManager } from "../Manager/buildingManager";
 import { Builder } from "../players/Builder";
@@ -220,7 +221,10 @@ export function openPowerupScreen(scene) {
         card.on("pointerdown", () => {
             const teamId = "1";
             addCardToHand(pu, teamId);
-            scene.events.emit("cards:updated");
+            scene.events.emit("cards:updated", buildCardAddedPayload(pu, {
+                teamNumber: teamId,
+                source: "reward",
+            }));
             closePowerupScreen(scene, uiContainer);
         });
 

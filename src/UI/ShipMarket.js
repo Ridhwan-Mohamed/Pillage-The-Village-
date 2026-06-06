@@ -6,7 +6,7 @@
 import Phaser from "phaser";
 import { UIDEPTH, SQUARESIZE, showAlert } from "../constants";
 import { AudioManager } from "../Manager/AudioManager";
-import { addCardToInventory } from "../Cards/CardInventory";
+import { addCardToInventory, buildCardAddedPayload } from "../Cards/CardInventory";
 import {
   MARKET_CARD_OFFERS,
   MARKET_CARD_SECTION,
@@ -231,7 +231,10 @@ function makeCardOffer(scene, card, {
         AudioManager.playError?.();
         return;
       }
-      scene.events.emit("cards:updated");
+      scene.events.emit("cards:updated", buildCardAddedPayload(card, {
+        teamNumber,
+        source: "market",
+      }));
       scene.achievementSystem?.addStat?.("marketPurchases", 1);
       AudioManager.playMarketPurchase?.();
       showAlert(scene, `Bought ${card.name}`, "#aaffaa");

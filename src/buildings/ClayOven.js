@@ -20,11 +20,19 @@ export class ClayOven {
 
     static scene;
     static cookDuration = 575;
+    static waterCookDuration = 430;
     static slotCount = 1;
     static itemCapacityPerSlot = 1;
 
     static getItemCapacityPerSlot() {
         return Math.max(1, Number(ClayOven.itemCapacityPerSlot || 1));
+    }
+
+    static getCookDurationForItem(itemType) {
+        if (itemType?.name === UI_ITEM_TYPES.unclean_water.name) {
+            return ClayOven.waterCookDuration;
+        }
+        return ClayOven.cookDuration;
     }
 
     static isSlotOpenForInput(oven, slotIndex) {
@@ -331,7 +339,7 @@ export class ClayOven {
                 const toAdd = Math.min(count, maxPerSlot);
                 this.cookingSlots[i] = { item: itemType, amount: toAdd };
                 this.cookTimers[i] = 0;
-                this.cookDurations[i] = ClayOven.cookDuration; // configurable later
+                this.cookDurations[i] = ClayOven.getCookDurationForItem(itemType);
                 inserted += toAdd;
                 count -= toAdd;
             }
@@ -377,7 +385,7 @@ export class ClayOven {
             const toAdd = Math.min(count, maxPerSlot);
             this.cookingSlots[slotIndex] = { item: itemType, amount: toAdd };
             this.cookTimers[slotIndex] = 0;
-            this.cookDurations[slotIndex] = ClayOven.cookDuration; // same default as addItemToCook
+            this.cookDurations[slotIndex] = ClayOven.getCookDurationForItem(itemType);
             inserted += toAdd;
         }
         // Matching item slot with room
@@ -601,7 +609,7 @@ export class ClayOven {
 
                 slot.amount -= 1;
                 this.cookTimers[i] = 0;
-                this.cookDurations[i] = ClayOven.cookDuration;
+                this.cookDurations[i] = ClayOven.getCookDurationForItem(slot.item);
 
                 if (slot.amount <= 0) {
                     this.cookingSlots[i] = null;

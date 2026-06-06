@@ -2297,7 +2297,8 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
                 teamNumber: '1',
                 dailyWatered: false,
                 growthStage: 0,
-                hasSeed: true
+                hasSeed: true,
+                harvestsRemaining: 0
             };
             Map._bindCropHover(block, x, y, cropState.teamNumber);
             Teams.teamLists['1'].crops.push(cropState);

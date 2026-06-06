@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { buildCardAddedPayload } from "../Cards/CardInventory";
 import { pickRandomPowerupCards } from "../Cards/PowerupCards";
 import { House } from "../buildings/House";
 import { SQUARESIZE, UIDEPTH, showAlert } from "../constants";
@@ -333,7 +334,10 @@ function openSwapOverlay(scene, incomingCard, onDone) {
 
 function grantCardReward(scene, card, onDone) {
   addCardToHand(card, TEAM_ID);
-  scene.events.emit("cards:updated");
+  scene.events.emit("cards:updated", buildCardAddedPayload(card, {
+    teamNumber: TEAM_ID,
+    source: "fort_reward",
+  }));
   onDone?.();
 }
 

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { UIDEPTH } from "../constants";
 import { STORE_UNLOCK_KEYS, unlockStoreItem } from "./StoreUnlockSystem";
-import { applyPortraitKeyToSprite } from "../players/playerPortraits.js";
+import { applyPortraitKeyToSprite, createPlayerPortraitAnimations } from "../players/playerPortraits.js";
 
 const DEFAULT_ACCENT_COLOR = 0xf6c86c;
 const DEFAULT_GLOW_COLOR = 0xffefb1;
@@ -221,6 +221,7 @@ function createArtSlot(
   let art;
 
   if (hasPortrait) {
+    createPlayerPortraitAnimations(scene);
     const portraitPlate = scene.add
       .circle(0, -8, 56, 0xffffff, 0.08)
       .setStrokeStyle(2, accentColor, 0.28);

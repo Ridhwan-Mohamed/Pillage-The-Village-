@@ -17,7 +17,7 @@ import { Player } from "../players/Player";
 import { fightManager } from "../Manager/fightManager";
 import { Wall } from "../buildings/Wall";
 import { AudioManager } from "../Manager/AudioManager";
-import { townRoads } from "../town";
+import { townBounds, townRoads } from "../town";
 import {
   MARKET_CARD_KIND,
   MARKET_PLACEHOLDER_ASSETS,
@@ -262,9 +262,50 @@ function isCellInBounds(bounds, x, y) {
   return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
 }
 
-function getTeamTownFootprint(teamNumber = PLAYER_TEAM) {
+function normalizeTownBounds(bounds) {
+  if (!bounds) return null;
+  const minX = Number(bounds.minX ?? bounds.minx);
+  const minY = Number(bounds.minY ?? bounds.miny);
+  const maxX = Number(bounds.maxX ?? bounds.maxx);
+  const maxY = Number(bounds.maxY ?? bounds.maxy);
+  if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+  return {
+    minX: Math.min(minX, maxX),
+    minY: Math.min(minY, maxY),
+    maxX: Math.max(minX, maxX),
+    maxY: Math.max(minY, maxY),
+  };
+}
+
+function intersectBounds(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const out = {
+    minX: Math.max(a.minX, b.minX),
+    minY: Math.max(a.minY, b.minY),
+    maxX: Math.min(a.maxX, b.maxX),
+    maxY: Math.min(a.maxY, b.maxY),
+  };
+  if (out.maxX < out.minX || out.maxY < out.minY) return null;
+  return out;
+}
+
+function getAutoWallBounds(scene, teamNumber = PLAYER_TEAM) {
+  const islandBounds = getMainIslandBounds(scene);
+  const generatedBounds = normalizeTownBounds(
+    townBounds?.[String(teamNumber)] ?? townBounds?.[teamNumber]
+  );
+  return intersectBounds(islandBounds, generatedBounds) || islandBounds;
+}
+
+function getTeamTownFootprint(teamNumber = PLAYER_TEAM, bounds = null) {
   const team = Teams.getTeam?.(teamNumber) ?? Teams.teamLists?.[String(teamNumber)];
   const cells = [];
+  const pushCell = (x, y) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (bounds && !isCellInBounds(bounds, x, y)) return;
+    cells.push({ x, y });
+  };
 
   for (const entry of team?.buildings || []) {
     const x = Number(entry?.[0] ?? entry?.x);
@@ -274,31 +315,78 @@ function getTeamTownFootprint(teamNumber = PLAYER_TEAM) {
     const lenY = Math.max(1, Number(type?.lenY ?? 1));
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     for (let yy = y; yy < y + lenY; yy++) {
-      for (let xx = x; xx < x + lenX; xx++) cells.push({ x: xx, y: yy });
+      for (let xx = x; xx < x + lenX; xx++) pushCell(xx, yy);
     }
   }
 
   for (const road of townRoads?.[String(teamNumber)] || []) {
     const x = Number(Array.isArray(road) ? road[0] : road?.x);
     const y = Number(Array.isArray(road) ? road[1] : road?.y);
-    if (Number.isFinite(x) && Number.isFinite(y)) cells.push({ x, y });
-  }
-
-  for (const troop of getLiveTeamTroops(teamNumber)) {
-    cells.push({
-      x: Math.floor(troop.x / SQUARESIZE),
-      y: Math.floor(troop.y / SQUARESIZE),
-    });
+    pushCell(x, y);
   }
 
   return cells;
 }
 
+function getAutoWallCropState(x, y, teamNumber = PLAYER_TEAM) {
+  const crop = Teams.getCropAt?.(x, y, teamNumber) ?? null;
+  if (crop) {
+    return {
+      hasCrop: true,
+      clearSeedless: crop.hasSeed === false,
+    };
+  }
+
+  const hasProtectedSpot = !!GameMap._cellHasProtectedFarmSpot?.(x, y, teamNumber);
+  const hasActualCrop = !!GameMap._cellHasActualCrop?.(x, y, teamNumber);
+  return {
+    hasCrop: hasProtectedSpot || hasActualCrop,
+    clearSeedless: false,
+  };
+}
+
+function getAutoWallBuildInfo(bounds, x, y) {
+  if (!isCellInBounds(bounds, x, y) || !inWorldBounds(x, y)) return { ok: false };
+  if (isWaterCell(x, y)) return { ok: false };
+  const cropState = getAutoWallCropState(x, y, PLAYER_TEAM);
+  if (cropState.hasCrop && !cropState.clearSeedless) return { ok: false };
+  if (Wall.getAt?.(x, y)?.active) return { ok: false };
+  if (GameMap.navGrid?.[y]?.[x] !== 1) return { ok: false };
+  return {
+    ok: true,
+    clearSeedlessCrop: cropState.clearSeedless,
+  };
+}
+
 function canAutoWallBuildAt(bounds, x, y) {
-  if (!isCellInBounds(bounds, x, y) || !inWorldBounds(x, y)) return false;
-  if (isWaterCell(x, y)) return false;
-  if (Wall.getAt?.(x, y)?.active) return false;
-  return GameMap.navGrid?.[y]?.[x] === 1;
+  return getAutoWallBuildInfo(bounds, x, y).ok;
+}
+
+function forceAutoWallGrassBase(x, y) {
+  const row = GameMap.grid?.[y];
+  if (!row || row[x] == null) return false;
+
+  const grassVal = TILE_TYPES.grass?.grid ?? 1;
+  const current = row[x];
+  if (Array.isArray(current)) {
+    const overlay = current.slice(1).find((val) => TILE_MAP(val) !== "crops");
+    row[x] = overlay == null ? grassVal : [grassVal, overlay];
+  } else {
+    row[x] = grassVal;
+  }
+
+  GameMap._refreshRenderCacheAround?.(x, y);
+  GameMap.regionSystem?.markDirty?.();
+  GameMap.regionDrawer?.markDirty?.();
+  GameMap.enemyRegionSystem?.markDirty?.();
+  GameMap.enemyRegionDrawer?.markDirty?.();
+  return true;
+}
+
+function clearSeedlessCropForAutoWall(scene, x, y) {
+  GameMap.clearCropAt?.(x, y, PLAYER_TEAM, { redraw: false });
+  if (!forceAutoWallGrassBase(x, y)) return;
+  scene?.zoomMixer?.updateOverviewCell?.(x, y, GameMap.grid);
 }
 
 function pickAutoWallDoorCell(seg, buildableCells) {
@@ -333,10 +421,10 @@ function pickAutoWallDoorCell(seg, buildableCells) {
 }
 
 function computeAutoWallCells(scene) {
-  const cells = getTeamTownFootprint(PLAYER_TEAM).filter((cell) => inWorldBounds(cell.x, cell.y));
+  const bounds = getAutoWallBounds(scene, PLAYER_TEAM);
+  const cells = getTeamTownFootprint(PLAYER_TEAM, bounds).filter((cell) => inWorldBounds(cell.x, cell.y));
   if (!cells.length) return [];
 
-  const bounds = getMainIslandBounds(scene);
   let minX = Math.min(...cells.map((cell) => cell.x));
   let maxX = Math.max(...cells.map((cell) => cell.x));
   let minY = Math.min(...cells.map((cell) => cell.y));
@@ -356,7 +444,12 @@ function computeAutoWallCells(scene) {
 
   const out = [];
   for (const seg of segments) {
-    const buildableCells = seg.filter((cell) => canAutoWallBuildAt(bounds, cell.x, cell.y));
+    const buildableCells = seg
+      .map((cell) => ({
+        ...cell,
+        buildInfo: getAutoWallBuildInfo(bounds, cell.x, cell.y),
+      }))
+      .filter((cell) => cell.buildInfo.ok);
     if (!buildableCells.length) continue;
     const door = pickAutoWallDoorCell(seg, buildableCells);
     const doorKey = door ? gridKey(door.x, door.y) : null;
@@ -365,6 +458,7 @@ function computeAutoWallCells(scene) {
         x: cell.x,
         y: cell.y,
         tileType: gridKey(cell.x, cell.y) === doorKey ? AUTO_WALL_DOOR_TYPE : AUTO_WALL_TYPE,
+        clearSeedlessCrop: !!cell.buildInfo.clearSeedlessCrop,
       });
     }
   }
@@ -395,6 +489,10 @@ function placeWallCells(scene, cells) {
     const tileType = cell.tileType === AUTO_WALL_DOOR_TYPE ? AUTO_WALL_DOOR_TYPE : AUTO_WALL_TYPE;
     const isDoor = tileType === AUTO_WALL_DOOR_TYPE;
     let placed = false;
+
+    if (cell.clearSeedlessCrop) {
+      clearSeedlessCropForAutoWall(scene, cell.x, cell.y);
+    }
 
     if (isDoor) {
       placed = placeAutoWallDoor(scene, cell.x, cell.y, 1);

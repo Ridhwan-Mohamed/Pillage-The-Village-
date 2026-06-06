@@ -260,7 +260,7 @@ export default class PlayerTab {
                 strokeThickness: 2,
                 align: 'center',
             }).setDepth(TAB_ACTION_DEPTH + 1);
-            const background = makeGlassRoundRect(scene, 0, BUTTON_H, 10, {
+            const background = makeGlassRoundRect(scene, width, BUTTON_H, 10, {
                 fill: style.fill,
                 alpha: 0.9,
                 stroke: style.stroke,
@@ -276,6 +276,7 @@ export default class PlayerTab {
             label.__background = background;
             label.__labelText = text;
             label.__fixedWidth = width;
+            label.layout?.();
 
             label
                 .setInteractive({ useHandCursor: true })
@@ -284,6 +285,8 @@ export default class PlayerTab {
                     onClick?.();
                 })
                 .on('pointerover', () => {
+                    if (label.__hovered) return;
+                    label.__hovered = true;
                     label.__baseY ??= label.y;
                     setHoverLiftState(scene, label, true, { baseY: label.__baseY, hoverLift: 3, hoverScale: 1.03 });
                     if (!scene.guardPlacement?.active) {
@@ -291,6 +294,8 @@ export default class PlayerTab {
                     }
                 })
                 .on('pointerout', () => {
+                    if (!label.__hovered) return;
+                    label.__hovered = false;
                     label.__baseY ??= label.y;
                     setHoverLiftState(scene, label, false, { baseY: label.__baseY, hoverLift: 3, hoverScale: 1.03 });
                     if (!scene.guardPlacement?.active) {
@@ -308,9 +313,16 @@ export default class PlayerTab {
             background?.setVisible?.(visible);
             text?.setVisible?.(visible);
             if (visible) {
+                button?.setInteractive?.({ useHandCursor: true });
                 button?.setAlpha?.(1);
                 background?.setAlpha?.(1);
                 text?.setAlpha?.(1);
+            } else {
+                button?.disableInteractive?.();
+                if (button) button.__hovered = false;
+                scene.tweens?.killTweensOf?.(button);
+                button?.setScale?.(1);
+                if (button?.__baseY != null) button.y = button.__baseY;
             }
         }
 
@@ -745,12 +757,14 @@ export default class PlayerTab {
             .on('pointerover', () => {
                 const data = row.userData;
                 if (!data) return;
+                if (data.hovered) return;
                 data.hovered = true;
                 this.updateRowVisual(data);
             })
             .on('pointerout', () => {
                 const data = row.userData;
                 if (!data) return;
+                if (!data.hovered) return;
                 data.hovered = false;
                 this.updateRowVisual(data);
             });
@@ -970,14 +984,19 @@ export default class PlayerTab {
         );
         data.bg.setStrokeStyle(selected ? 2.5 : hovered ? 2 : 1.5, accent, selected ? 0.34 : hovered ? 0.22 : 0.12);
         data.nameText?.setColor(selected ? "#fff8eb" : BOTTOM_BAR_THEME.text);
-        setHoverLiftState(this.scene, data.row, hovered, {
-            baseY: this._rowBaseY.get(data.row) ?? data.row.y,
-            hoverLift: 0,
-            hoverScale: 1.008,
-            moveY: false,
-        });
-        if (!hovered) {
+        this.scene.tweens?.killTweensOf?.(data.row);
+        if (data.row.scaleX !== 1 || data.row.scaleY !== 1) {
             data.row.setScale(1);
+        }
+        data.bg.__baseY ??= data.bg.y;
+        if (data.__hoverVisualState !== hovered) {
+            data.__hoverVisualState = hovered;
+            setHoverLiftState(this.scene, data.bg, hovered, {
+                baseY: data.bg.__baseY,
+                hoverLift: 0,
+                hoverScale: 1.008,
+                moveY: false,
+            });
         }
     }
 

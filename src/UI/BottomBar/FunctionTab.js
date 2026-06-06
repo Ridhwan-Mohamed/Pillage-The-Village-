@@ -33,9 +33,9 @@ const MODE_COLORS = {
 const TOGGLE_COLORS = {
   water: 0x74cbff,
 };
-const WATER_CONTROL_BUTTON_WIDTH = 24;
-const WATER_ACTION_BUTTON_WIDTH = 72;
-const WATER_CONTROL_BUTTON_HEIGHT = 18;
+const WATER_CONTROL_BUTTON_WIDTH = 22;
+const WATER_ACTION_BUTTON_WIDTH = 86;
+const WATER_CONTROL_BUTTON_HEIGHT = 16;
 
 const GATHER_RESOURCES = [
   { key: "wood", label: "WOOD", color: 0x166534, text: "#86efac" },
@@ -303,10 +303,12 @@ export default class FunctionTab {
       button.root.setPosition(mainStartX + index * (mainButtonWidth + MAIN_BUTTON_GAP), row1Y);
       button.hit.setSize(button.width, button.height);
       if (button.key === "water") {
-        button.text.setPosition(0, -12);
-        button.text.setFixedSize(button.width - 18, 18);
+        button.text.setFontSize("11px");
+        button.text.setPosition(0, -Math.max(12, Math.round(button.height * 0.32)));
+        button.text.setFixedSize(button.width - 18, 16);
         this._layoutWaterControls(button);
       } else {
+        button.text.setFontSize("14px");
         button.text.setPosition(0, 0);
         button.text.setFixedSize(button.width - 14, button.height - 10);
       }
@@ -333,22 +335,51 @@ export default class FunctionTab {
 
   _layoutWaterControls(button) {
     if (!button?.controlBg) return;
-    const countY = 1;
-    const actionY = Math.round(button.height / 2 - 10);
-    const countX = -Math.round(button.width * 0.11);
-    const minusX = countX - 26;
-    const plusX = countX + 26;
-    const unitX = countX + 42;
+    const automation = this._getAutomation() || Teams.createTownAutomationState();
+    const countLabel = String(this._getWaterCountValue(automation));
+    const unitLabel = this._getWaterCountUnitLabel(automation);
+    const actionLabel = this._getWaterActionLabel(automation);
+    const compact = button.width < 150;
+    const gap = compact ? 3 : 5;
+    const countWidth = compact
+      ? Math.max(18, Math.min(28, countLabel.length * 9 + 10))
+      : Math.max(24, Math.min(46, countLabel.length * 10 + 12));
+    const unitWidth = compact
+      ? (unitLabel === "waters" ? 32 : 22)
+      : (unitLabel === "waters" ? 48 : 30);
+    const rowWidth = WATER_CONTROL_BUTTON_WIDTH + gap + countWidth + gap + WATER_CONTROL_BUTTON_WIDTH + gap + unitWidth;
+    const rowStartX = -rowWidth / 2;
+    const countY = Math.round(-button.height * 0.02);
+    const actionY = Math.round(button.height * 0.31);
+    const minusX = rowStartX + WATER_CONTROL_BUTTON_WIDTH / 2;
+    const countX = rowStartX + WATER_CONTROL_BUTTON_WIDTH + gap + countWidth / 2;
+    const plusX = rowStartX + WATER_CONTROL_BUTTON_WIDTH + gap + countWidth + gap + WATER_CONTROL_BUTTON_WIDTH / 2;
+    const unitX = rowStartX + WATER_CONTROL_BUTTON_WIDTH + gap + countWidth + gap + WATER_CONTROL_BUTTON_WIDTH + gap;
+    const actionWidth = Math.min(
+      Math.max(WATER_ACTION_BUTTON_WIDTH, actionLabel.length * 8 + 18),
+      Math.max(62, button.width - 18)
+    );
 
     button.minusText.setPosition(minusX, countY);
     button.countText.setPosition(countX, countY);
     button.plusText.setPosition(plusX, countY);
+    button.unitText.setFontSize(compact ? "8px" : "10px");
+    button.unitText.setFixedSize(unitWidth + 2, WATER_CONTROL_BUTTON_HEIGHT);
     button.unitText.setPosition(unitX, countY);
     button.actionText.setPosition(0, actionY);
 
     button.minusHit.setPosition(minusX, countY).setSize(WATER_CONTROL_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT);
     button.plusHit.setPosition(plusX, countY).setSize(WATER_CONTROL_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT);
-    button.actionHit.setPosition(0, actionY).setSize(WATER_ACTION_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT);
+    button.actionHit.setPosition(0, actionY).setSize(actionWidth, WATER_CONTROL_BUTTON_HEIGHT);
+    button.waterLayout = {
+      countY,
+      actionY,
+      minusX,
+      countX,
+      plusX,
+      unitX,
+      actionWidth,
+    };
   }
 
   _getSceneActiveMode() {
@@ -929,9 +960,9 @@ export default class FunctionTab {
       return `${done}/${total} done`;
     }
     if (finishing > 0) {
-      return "Finishing current batch";
+      return "Finishing batch";
     }
-    return "Start production of";
+    return "Clean water";
   }
 
   _getWaterCountValue(automation) {
@@ -1002,25 +1033,19 @@ export default class FunctionTab {
 
     const automation = this._getAutomation() || Teams.createTownAutomationState();
     const state = this._getWaterUiState(automation);
-    const countY = 1;
-    const actionY = Math.round(button.height / 2 - 10);
-    const countX = -Math.round(button.width * 0.11);
-    const minusX = countX - 26;
-    const plusX = countX + 26;
-    const unitX = countX + 42;
-
-    button.controlBg.clear();
-    drawPill(minusX, countY, WATER_CONTROL_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT, button.minusText, !!button.minusHovered, !!button.minusPressed, true);
-    drawPill(plusX, countY, WATER_CONTROL_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT, button.plusText, !!button.plusHovered, !!button.plusPressed, true);
-    drawPill(0, actionY, WATER_ACTION_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT, button.actionText, !!button.actionHovered, !!button.actionPressed, !state.finishing);
 
     button.minusText.setText("-");
     button.countText.setText(`${this._getWaterCountValue(automation)}`);
-    button.countText.setPosition(countX, countY);
     button.plusText.setText("+");
     button.unitText.setText(this._getWaterCountUnitLabel(automation));
-    button.unitText.setPosition(unitX, countY);
     button.actionText.setText(this._getWaterActionLabel(automation));
+    this._layoutWaterControls(button);
+
+    const layout = button.waterLayout || {};
+    button.controlBg.clear();
+    drawPill(layout.minusX ?? 0, layout.countY ?? 0, WATER_CONTROL_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT, button.minusText, !!button.minusHovered, !!button.minusPressed, true);
+    drawPill(layout.plusX ?? 0, layout.countY ?? 0, WATER_CONTROL_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT, button.plusText, !!button.plusHovered, !!button.plusPressed, true);
+    drawPill(0, layout.actionY ?? 0, layout.actionWidth ?? WATER_ACTION_BUTTON_WIDTH, WATER_CONTROL_BUTTON_HEIGHT, button.actionText, !!button.actionHovered, !!button.actionPressed, !state.finishing);
   }
 
   updateVisuals() {

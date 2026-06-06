@@ -110,7 +110,8 @@ export const TILE_TYPES = {
     sides: { up: 3, down: 4, left: 5, right: 6 },
     corners: { topLeft: 7, topRight: 8, bottomLeft: 9, bottomRight: 10 },
     complex: true,
-    price: { stone: 1 },         
+    price: { stone: 1 },
+    cost: { stone: 1 },
     spread: true,
     block: true,
     grid: 2,
@@ -443,7 +444,7 @@ export const TILE_TYPES = {
     sides: { up: 58, down: 59, left: 60, right: 61 },
     corners: { topLeft: 62, topRight: 63, bottomLeft: 64, bottomRight: 65 },
     complex: true,
-    price: 5,                 // or whatever
+    price: { wood: 1 },
     spread: true,
     block: true,
     grid: 57,                 // IMPORTANT: used in MapFromImage “blocked” check if you add it
@@ -470,7 +471,8 @@ export const TILE_TYPES = {
     lenY: 1,
     spriteSheet: true,   // IMPORTANT: 2-frame sheet
     complex: false,
-    price: { stone: 1 }
+    price: { stone: 1 },
+    cost: { stone: 1 }
   },
   woodWall_door: {
     value: 'woodWall_door',
@@ -482,7 +484,8 @@ export const TILE_TYPES = {
     lenY: 1,
     spriteSheet: true,
     complex: false,
-    price: { wood: 1 }
+    price: { wood: 1 },
+    cost: { wood: 1 }
   },
   fort_floor : {
     name: "fort_floor",

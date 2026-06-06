@@ -6,6 +6,7 @@ import day_ambience from 'url:../assets/audio/day-ambience.ogg';
 import night_ambience from 'url:../assets/audio/night-ambience.ogg';
 import occluded_ambience from 'url:../assets/audio/occluded-ambience.ogg';
 import ocean_ambience from 'url:../assets/audio/ocean-ambience.ogg';
+import main_menu_ambience from 'url:../assets/audio/main_menu_ambience.ogg';
 import oven_cooking from 'url:../assets/audio/oven-cooking.ogg';
 import step_sfx from 'url:../assets/audio/footstep.ogg';
 import axe_chop from 'url:../assets/audio/axe-chop.ogg';
@@ -188,7 +189,7 @@ export class AudioManager {
     scene.load.audio("sfx_door_open",   door_open);
     scene.load.audio("sfx_door_close",  door_close);
     scene.load.audio("sfx_end_stage_explosions", end_stage_explosions);
-    scene.load.audio("amb_menu_ocean", ocean_ambience);
+    scene.load.audio("amb_menu_ocean", main_menu_ambience);
     scene.load.audio("sfx_ui_hover", button_hover);
     scene.load.audio("sfx_ui_click_menu", button_click_bubble);
     scene.load.audio("sfx_ui_bottom_bar_click", bottom_bar_click);
@@ -714,7 +715,7 @@ export class AudioManager {
         if (!this.scene.cache.audio.exists("sfx_tree_break")) return;
 
         this.scene.sound.play("sfx_tree_break", {
-        volume: opts.volume ?? 0.55,
+        volume: opts.volume ?? 0.41,
         rate: opts.rate ?? (0.95 + Math.random() * 0.1),
         });
     }
@@ -725,7 +726,7 @@ export class AudioManager {
         if (!this.scene.cache.audio.exists("sfx_rock_break")) return;
 
         this.scene.sound.play("sfx_rock_break", {
-        volume: opts.volume ?? 0.55,
+        volume: opts.volume ?? 0.41,
         rate: opts.rate ?? (0.95 + Math.random() * 0.1),
         });
     }

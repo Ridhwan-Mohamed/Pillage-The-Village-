@@ -46,7 +46,7 @@ const PRESSURE_CLEAR_BONUSES = Object.freeze({
   3: 145,
 });
 
-const TOWN_TOWER_BASE_DAWN_INCOME = 250;
+const TOWN_TOWER_BASE_DAWN_INCOME = 175;
 const QUICK_SELL_PERMIT_BASE_VALUE = 100;
 const GOLD_ORE_STAGE_BASE_PAYOUT = 75;
 const GOLD_ORE_DAY_SCALE = 0.05;
@@ -129,14 +129,6 @@ export function getTroopSellValue(troop, scene) {
   const key = getTroopKey(troop);
   if (key === "default") return 20;
   return roundPrice(getRecruitCost(key, scene) * getTroopSellRatio(key), 5);
-}
-
-export function canSellTroopsNow(scene) {
-  return true;
-}
-
-export function getTroopSellLockMessage() {
-  return "";
 }
 
 export function getStorageSellPrices() {

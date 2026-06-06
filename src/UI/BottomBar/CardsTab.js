@@ -142,8 +142,11 @@ export default class CardsTab {
       this.buildShell();
       this.rebuild();
     };
-    this._onCardsUpdated = () => {
-      if (this.scene.uiBottomBar?.currentPage === "cards") this.rebuild();
+    this._onCardsUpdated = (payload = null) => {
+      if (this.scene.uiBottomBar?.currentPage === "cards") {
+        this.rebuild();
+        this._pulseAddedBucket(payload);
+      }
     };
     this._onWheel = (pointer, _gameObjects, dx, dy) => this._handleWheel(pointer, dx, dy);
     this._onPointerMove = (pointer) => this._handlePointerMove(pointer);
@@ -396,6 +399,28 @@ export default class CardsTab {
   _applyToggleVisuals() {
     Object.values(this._toggles || {}).forEach(({ bg, text, mode, hovered }) => {
       applyToggleVisual(bg, text, this.mode === mode.key, mode.accent, hovered);
+    });
+  }
+
+  _pulseAddedBucket(payload = null) {
+    const action = String(payload?.action || "").toLowerCase();
+    if (action !== "added") return;
+
+    const modeKey = payload?.bucket === "consumables" ? "consumables" : "deck";
+    const toggle = this._toggles?.[modeKey];
+    if (!toggle?.text) return;
+
+    this.scene.tweens.killTweensOf(toggle.text);
+    toggle.text.setScale(1);
+    this.scene.tweens.add({
+      targets: toggle.text,
+      scaleX: 1.16,
+      scaleY: 1.16,
+      duration: 130,
+      yoyo: true,
+      repeat: 2,
+      ease: "Sine.easeInOut",
+      onComplete: () => toggle.text?.setScale?.(1),
     });
   }
 

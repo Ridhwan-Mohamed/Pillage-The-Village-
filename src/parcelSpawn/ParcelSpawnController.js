@@ -107,6 +107,18 @@ export class ParcelSpawnController {
     }
   }
 
+  refreshMilitiaLockState() {
+    for (const slot of this.slots.values()) {
+      slot.refreshMilitiaLockState?.();
+    }
+  }
+
+  refreshDisplayState() {
+    for (const slot of this.slots.values()) {
+      slot.refreshDisplayState?.();
+    }
+  }
+
   setVisible(v) {
     this.root.setVisible(v);
   }

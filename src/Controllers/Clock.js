@@ -8,9 +8,12 @@ import { DailyNeedsTracker } from "../UI/DailyNeedsTracker";
 
 const DAWN_START = 6;
 const DAY_START = 7;
-const DUSK_START = 16;
-const NIGHT_START = 18;
-const NIGHT_PEAK_LOCK_HOUR = 20;
+const PREVIOUS_NIGHT_START = 18;
+const DAYLIGHT_EXTENSION_FACTOR = 1.2;
+const DUSK_LENGTH_HOURS = 2;
+const NIGHT_START = DAWN_START + ((PREVIOUS_NIGHT_START - DAWN_START) * DAYLIGHT_EXTENSION_FACTOR);
+const DUSK_START = NIGHT_START - DUSK_LENGTH_HOURS;
+const NIGHT_PEAK_LOCK_HOUR = NIGHT_START + 2;
 const NIGHT_END = DAWN_START;
 const CROP_GROWTH_INTERVAL_HOURS = 8;
 const CROP_GROWTH_START_HOUR = DAWN_START;
@@ -72,6 +75,22 @@ const PHASE_DEFS = {
     },
 };
 
+export const CLOCK_PHASE_HOURS = Object.freeze({
+    dawnStart: DAWN_START,
+    dayStart: DAY_START,
+    duskStart: DUSK_START,
+    nightStart: NIGHT_START,
+    nightEnd: NIGHT_END,
+    nightPeak: NIGHT_PEAK_LOCK_HOUR,
+});
+
+function splitHourFloat(hourFloat) {
+    const normalized = ((Number(hourFloat) % 24) + 24) % 24;
+    const hours = Math.floor(normalized);
+    const minutes = (normalized - hours) * 60;
+    return { hours, minutes };
+}
+
 export class Clock {
 
     static overlay;
@@ -88,6 +107,8 @@ export class Clock {
         this.spawnedThisNight = 0;
         this.lastSend = null;
         this.wasNight = false; // <== track night state
+        this._lastPhaseKey = this.getPhaseKey();
+        this._ignoreInitialPreDawnNight = true;
 
         this.minuteStep = 0.3;
         this.ticksPerMinute = 1;
@@ -191,9 +212,11 @@ export class Clock {
         this.spawnedThisNight = Math.max(0, Number(snapshot.spawnedThisNight ?? this.spawnedThisNight ?? 0));
         this.lastSend = snapshot.lastSend ?? null;
         this.wasNight = !!snapshot.wasNight;
+        this._ignoreInitialPreDawnNight = this.day === 1 && this.getHourFloat() < DAWN_START && !this.wasNight;
         this.minuteStep = Number(snapshot.minuteStep ?? this.minuteStep ?? 0.3);
         this.ticksPerMinute = Math.max(1, Number(snapshot.ticksPerMinute ?? this.ticksPerMinute ?? 1));
         this.tickCount = Math.max(0, Number(snapshot.tickCount ?? this.tickCount ?? 0));
+        this._lastPhaseKey = this.getPhaseKey();
         this.externalText?.setText?.(this.formatTimeWithDay());
         this.updateLighting?.();
     }
@@ -253,8 +276,9 @@ export class Clock {
         if (this.paused) return; // ⛔ don't advance time or spawn events
         const holdAtPeakDarkness = this.scene?.shouldHoldNightAtPeakDarkness?.();
         if (holdAtPeakDarkness && this.isNight() && this.getHourFloat() >= NIGHT_PEAK_LOCK_HOUR) {
-            this.hours = NIGHT_PEAK_LOCK_HOUR;
-            this.minutes = 0;
+            const peak = splitHourFloat(NIGHT_PEAK_LOCK_HOUR);
+            this.hours = peak.hours;
+            this.minutes = peak.minutes;
             this.wasNight = true;
             return;
         }
@@ -267,14 +291,20 @@ export class Clock {
                 this.hours = 0;
             }
 
-            // Handle night end transition
-            const isNight = this.isNight();
-            if (this.wasNight && !isNight) {
-                this.day++;
-                this.waveAmount += 2;
-                this.spawnedThisNight = 0;
-            }
+        }
+
+        const isNight = this.isNight();
+        const ignorePreDawnNight = this._ignoreInitialPreDawnNight && isNight && this.getHourFloat() < DAWN_START;
+        if (this.wasNight && !isNight) {
+            this.day++;
+            this.waveAmount += 2;
+            this.spawnedThisNight = 0;
+        }
+        if (!ignorePreDawnNight) {
             this.wasNight = isNight;
+        }
+        if (!isNight) {
+            this._ignoreInitialPreDawnNight = false;
         }
     }
 
@@ -283,19 +313,24 @@ export class Clock {
     }
 
     isDayStart(){
-        return this.hours == DAWN_START && this.minutes == 0
+        return this._isPhaseTransitionStart("dawn");
     }
 
     isDayPhaseStart() {
-        return this.hours == DAY_START && this.minutes == 0
+        return this._isPhaseTransitionStart("day");
     }
 
     isDuskStart() {
-        return this.hours == DUSK_START && this.minutes == 0
+        return this._isPhaseTransitionStart("dusk");
     }
 
     isNightStart(){
-        return this.hours == NIGHT_START && this.minutes == 0
+        return this._isPhaseTransitionStart("night");
+    }
+
+    _isPhaseTransitionStart(phaseKey) {
+        const current = this.getPhaseKey();
+        return current === phaseKey && this._lastPhaseKey !== current;
     }
 
     isCropGrowthTick() {
@@ -310,6 +345,7 @@ export class Clock {
         const duskStart = this.isDuskStart();
         const nightStart = this.isNightStart();
         const cropGrowthTick = this.isCropGrowthTick();
+        const currentPhaseKey = this.getPhaseKey();
 
         if (duskStart) {
             this.scene?.handleDuskStart?.();
@@ -337,6 +373,8 @@ export class Clock {
         } else if (!nightStart && !dayStart) {
             this.lastSend = null;
         }
+
+        this._lastPhaseKey = currentPhaseKey;
     }
 
     updateLighting() {
@@ -344,15 +382,17 @@ export class Clock {
         const hourFloat = this.hours + this.minutes / 60;
         let nightHour = hourFloat;
         const maxDarkness = 0.72;
-        if (nightHour < 6) nightHour += 24;
+        const dawnEnd = DAWN_START + 24;
+        const dawnRampStart = dawnEnd - 2;
+        if (nightHour < DAWN_START) nightHour += 24;
 
-        if (nightHour >= 20 && nightHour <= 28) {
+        if (nightHour >= NIGHT_PEAK_LOCK_HOUR && nightHour <= dawnRampStart) {
             alpha = maxDarkness;              // darkness amount
-        } else if (nightHour >= 18 && nightHour < 20) {
-            const t = (nightHour - 18) / 2;   // dusk ramp
+        } else if (nightHour >= NIGHT_START && nightHour < NIGHT_PEAK_LOCK_HOUR) {
+            const t = (nightHour - NIGHT_START) / Math.max(0.001, NIGHT_PEAK_LOCK_HOUR - NIGHT_START);
             alpha = t * maxDarkness;
-        } else if (nightHour > 28 && nightHour <= 30) {
-            const t = 1 - (nightHour - 28) / 2; // dawn ramp
+        } else if (nightHour > dawnRampStart && nightHour <= dawnEnd) {
+            const t = 1 - (nightHour - dawnRampStart) / Math.max(0.001, dawnEnd - dawnRampStart);
             alpha = t * maxDarkness;
         }
 

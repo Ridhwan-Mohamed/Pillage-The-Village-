@@ -66,6 +66,7 @@ export function CreateBottomBar(scene) {
 
   let expanded = START_OPEN;
   let tween = null;
+  let cardsNoticeHideTimer = null;
 
   const EXPANDED_Y = scene.scale.height;
   const COLLAPSED_Y = scene.scale.height + (EXPANDED - COLLAPSED + 155); // ✅ no extra offset
@@ -82,6 +83,138 @@ export function CreateBottomBar(scene) {
     openProgress: START_OPEN ? 1 : 0,
   };
 
+  function getCardsButton() {
+    return (tabs?.buttons || []).find((button) => button?.name === "cards") || null;
+  }
+
+  function placeCardsNotice(root = scene.uiBottomBar?._cardsNoticeRoot) {
+    if (!root) return;
+
+    const cardsButton = getCardsButton();
+    const bounds = cardsButton?.getBounds?.();
+    const halfW = Math.max(80, Number(root._noticeW || 170) / 2);
+    let x = scene.scale.width - halfW - 12;
+    let y = scene.scale.height - 54;
+
+    if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width)) {
+      x = bounds.x + (bounds.width / 2);
+      y = Number.isFinite(bounds.top) ? bounds.top - 18 : bounds.y - 18;
+    }
+
+    x = Phaser.Math.Clamp(x, halfW + 8, scene.scale.width - halfW - 8);
+    y = Phaser.Math.Clamp(y, 30, scene.scale.height - 42);
+    root.setPosition(x, y);
+  }
+
+  function destroyCardsNotice() {
+    cardsNoticeHideTimer?.remove?.(false);
+    cardsNoticeHideTimer = null;
+    scene.uiBottomBar?._cardsNoticeRoot?.destroy?.(true);
+    if (scene.uiBottomBar) scene.uiBottomBar._cardsNoticeRoot = null;
+  }
+
+  function pulseCardsButton() {
+    const cardsButton = getCardsButton();
+    const text = cardsButton?.getElement?.("text") || cardsButton?.text;
+    if (!text) return;
+
+    scene.tweens.killTweensOf(text);
+    text.setScale?.(1);
+    scene.tweens.add({
+      targets: text,
+      scaleX: 1.24,
+      scaleY: 1.24,
+      duration: 130,
+      yoyo: true,
+      repeat: 3,
+      ease: "Sine.easeInOut",
+      onComplete: () => text.setScale?.(1),
+    });
+  }
+
+  function showCardsAcquisitionNotice(payload = {}) {
+    const bucket = payload?.bucket === "consumables" ? "consumables" : "deck";
+    const accent = bucket === "consumables" ? 0x7cffb2 : COLOR_CARDS;
+    const mainLabel = String(payload?.message || (bucket === "consumables" ? "Consumable added" : "Card added"));
+    const detailLabel = bucket === "consumables" ? "Cards > Consumables" : "Cards > Deck Cards";
+    const noticeW = bucket === "consumables" ? 188 : 170;
+    const noticeH = 38;
+
+    pulseCardsButton();
+    destroyCardsNotice();
+
+    const root = scene.add.container(0, 0)
+      .setDepth(BOTTOM_BAR_DEPTH + 12)
+      .setScrollFactor(0);
+    root._noticeW = noticeW;
+
+    const bg = makeGlassRoundRect(scene, noticeW, noticeH, 12, {
+      fill: mixColor(accent, BOTTOM_BAR_THEME.panelFill, 0.36),
+      alpha: 0.96,
+      stroke: accent,
+      strokeAlpha: 0.62,
+      strokeWidth: 2,
+    });
+    const main = scene.add.text(0, -7, mainLabel, {
+      fontFamily: "Bungee",
+      fontSize: "10px",
+      color: "#fff9ef",
+      stroke: "#07131d",
+      strokeThickness: 3,
+      align: "center",
+    }).setOrigin(0.5);
+    const detail = scene.add.text(0, 8, detailLabel, {
+      fontFamily: "Bungee",
+      fontSize: "7px",
+      color: "#d9f3ff",
+      stroke: "#07131d",
+      strokeThickness: 2,
+      align: "center",
+    }).setOrigin(0.5);
+
+    root.add([bg, main, detail]);
+    scene.uiBottomBar._cardsNoticeRoot = root;
+    placeCardsNotice(root);
+
+    const targetY = root.y;
+    root.setAlpha(0).setScale(0.9).setY(targetY + 8);
+    scene.tweens.add({
+      targets: root,
+      alpha: 1,
+      scaleX: 1,
+      scaleY: 1,
+      y: targetY,
+      duration: 180,
+      ease: "Back.Out",
+    });
+
+    cardsNoticeHideTimer = scene.time?.delayedCall?.(2200, () => {
+      if (scene.uiBottomBar?._cardsNoticeRoot !== root) return;
+      scene.tweens.add({
+        targets: root,
+        alpha: 0,
+        y: root.y - 8,
+        duration: 220,
+        ease: "Cubic.easeIn",
+        onComplete: () => {
+          if (scene.uiBottomBar?._cardsNoticeRoot === root) {
+            scene.uiBottomBar._cardsNoticeRoot = null;
+          }
+          root.destroy(true);
+        },
+      });
+      cardsNoticeHideTimer = null;
+    }) || null;
+  }
+
+  function onCardsUpdatedForNotice(payload = null) {
+    if (!payload || typeof payload !== "object") return;
+    if (String(payload.action || "").toLowerCase() !== "added") return;
+    showCardsAcquisitionNotice(payload);
+  }
+
+  scene.uiBottomBar.notifyCardsAdded = showCardsAcquisitionNotice;
+
   const syncBottomBarLayout = () => {
     const width = scene.scale.width;
     const barWidth = getBottomBarWidth(scene);
@@ -94,6 +227,7 @@ export function CreateBottomBar(scene) {
     syncTabButtonAnchors(tabs, toggleBtn);
     scene.uiBottomBar.expandedY = expandedY;
     scene.uiBottomBar.collapsedY = collapsedY;
+    placeCardsNotice();
   };
   syncBottomBarLayout();
   scene._bottomBarRoots.push(ui);
@@ -289,6 +423,7 @@ export function CreateBottomBar(scene) {
   // (optional) spacebar toggle
   scene.input.keyboard.on('keydown-SPACE', onSpaceToggle);
   scene.scale.on('resize', onScaleResize);
+  scene.events.on("cards:updated", onCardsUpdatedForNotice);
 
   scene.uiBottomBar.destroy = () => {
     const bar = scene.uiBottomBar;
@@ -304,8 +439,10 @@ export function CreateBottomBar(scene) {
     tabs?.off?.('button.click', onTabButtonClick);
     scene.input?.keyboard?.off?.('keydown-SPACE', onSpaceToggle);
     scene.scale?.off?.('resize', onScaleResize);
+    scene.events?.off?.("cards:updated", onCardsUpdatedForNotice);
     scene._bottomBarResizeRebuildTimer?.remove?.(false);
     scene._bottomBarResizeRebuildTimer = null;
+    destroyCardsNotice();
 
     scene.functionTab?.destroy?.();
     scene.playerTab?.destroy?.();

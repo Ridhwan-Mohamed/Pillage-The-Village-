@@ -1,6 +1,6 @@
 // WallPlacementController.js
 import Phaser from "phaser";
-import { SQUARESIZE, WORLD_DIMENSIONX, WORLD_DIMENSIONY, TILE_TYPES, UIDEPTH } from "../constants";
+import { SQUARESIZE, WORLD_DIMENSIONX, WORLD_DIMENSIONY, TILE_TYPES, UIDEPTH, showAlert } from "../constants";
 import { Map } from "../map";
 import { buildingManager } from "../Manager/buildingManager";
 import { Player } from "../players/Player";
@@ -19,6 +19,35 @@ import { Map as GameMap } from "../map";
 
 const FINALIZE_BUTTON_WIDTH = 54;
 const FINALIZE_BUTTON_HEIGHT = 34;
+
+function normalizeCostBundle(rawCost) {
+  if (rawCost == null) return {};
+  if (typeof rawCost === "number") {
+    const amount = Math.max(0, Number(rawCost) || 0);
+    return amount > 0 ? { money: amount } : {};
+  }
+  if (typeof rawCost !== "object") return {};
+
+  const cost = {};
+  for (const [resourceKey, rawAmount] of Object.entries(rawCost)) {
+    const amount = Math.max(0, Number(rawAmount) || 0);
+    if (!(amount > 0)) continue;
+    cost[resourceKey] = Math.max(0, Number(cost[resourceKey] || 0)) + amount;
+  }
+  return cost;
+}
+
+function mergeCostBundle(total, cost) {
+  for (const [resourceKey, amount] of Object.entries(cost || {})) {
+    total[resourceKey] = Math.max(0, Number(total[resourceKey] || 0)) + amount;
+  }
+}
+
+function formatMissingCostMessage(missing) {
+  if (!Array.isArray(missing) || !missing.length) return "Not enough materials";
+  const parts = missing.map((item) => `${Math.ceil(Number(item.missing) || 0)} ${item.label || item.key}`);
+  return `Need ${parts.join(", ")}`;
+}
 
 export class WallPlacementController {
   constructor(scene) {
@@ -383,33 +412,31 @@ finalize() {
   const totalCost = {};
   for (const tile of ordered) {
     const buildType = TILE_TYPES[tile.buildTypeName] ?? TILE_TYPES[this.wallTypeName];
-    const rawCost = buildType?.cost ?? buildType?.price ?? null;
-    if (!rawCost || typeof rawCost !== "object") continue;
-    for (const [resourceKey, rawAmount] of Object.entries(rawCost)) {
-      const amount = Math.max(0, Number(rawAmount) || 0);
-      if (!(amount > 0)) continue;
-      totalCost[resourceKey] = Math.max(0, Number(totalCost[resourceKey] || 0)) + amount;
-    }
+    mergeCostBundle(totalCost, normalizeCostBundle(buildType?.cost ?? buildType?.price ?? null));
   }
 
-  // Keep this disabled while testing so wall placement is never blocked by current stock.
-  // if (Object.keys(totalCost).length && !buildingManager.hasRequiredMaterials(totalCost, "1")) {
-  //   return;
-  // }
+  const hasCost = Object.keys(totalCost).length > 0;
+  if (hasCost && !buildingManager.hasRequiredMaterials(totalCost, "1")) {
+    const missing = buildingManager.getMissingMaterials?.(totalCost, "1") || [];
+    showAlert(this.scene, formatMissingCostMessage(missing), "#ff5555");
+    AudioManager.playError?.({ volume: 0.24 });
+    return;
+  }
 
-  const prepaid = Object.keys(totalCost).length > 0 && buildingManager.hasRequiredMaterials(totalCost, "1");
-  if (prepaid) {
+  const prepaid = hasCost;
+  if (hasCost) {
     buildingManager.consumeRequiredMaterials(totalCost, "1");
   }
 
   const wallJobId = buildingManager.createWallJobId?.("1") ?? `wall-job-${Date.now()}`;
   const queuedTiles = ordered.map((tile) => {
     const buildType = TILE_TYPES[tile.buildTypeName] ?? TILE_TYPES[this.wallTypeName];
+    const refundCost = normalizeCostBundle(buildType?.cost ?? buildType?.price ?? null);
     return {
       ...tile,
       wallJobId,
       prepaid,
-      refundCost: buildType?.cost ?? buildType?.price ?? null,
+      refundCost: Object.keys(refundCost).length ? refundCost : null,
     };
   });
 

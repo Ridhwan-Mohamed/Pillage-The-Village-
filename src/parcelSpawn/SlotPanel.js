@@ -468,6 +468,18 @@ export class SlotPanel {
     }
   }
 
+  _hideAllOverviewObjects({ includeStatus = true } = {}) {
+    this.overviewGridObjects?.forEach((o) => o.setVisible(false));
+    this._overviewPressureObjects?.forEach((o) => o.setVisible(false));
+    this._overviewMilitiaObjects?.forEach((o) => o.setVisible(false));
+    this._overviewFavorBg?.setVisible(false);
+    this._overviewFavorLabel?.setVisible(false);
+    if (includeStatus) {
+      this._overviewStatusPrimary?.setVisible(false);
+      this._overviewStatusSecondary?.setVisible(false);
+    }
+  }
+
   _rebuildOverviewGrid() {
     this.overviewGridObjects?.forEach((o) => {
       try { o.destroy?.(); } catch {}
@@ -493,10 +505,7 @@ export class SlotPanel {
     this._overviewFavorBg = null;
     this._overviewFavorLabel = null;
     this._buildOverviewGrid();
-
-    if (this.mode !== "overview" || this._overviewMenu !== "GRID" || this._pressureMode) {
-      this.overviewGridObjects?.forEach((o) => o.setVisible(false));
-    }
+    this._applyModeVisibilityState();
   }
 
   _refreshOverviewGridCosts() {
@@ -569,7 +578,7 @@ export class SlotPanel {
         stroke: "#000000",
         strokeThickness: 7,
         align: "center",
-      }).setOrigin(0.5).setScrollFactor(1).setVisible(!def.close);
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
 
       bg.on("pointerover", () => bg.setFillStyle(0xffffff, 0.16));
       bg.on("pointerout", () => bg.setFillStyle(0xffffff, 0.08));
@@ -646,7 +655,7 @@ export class SlotPanel {
         strokeThickness: 4,
         align: "center",
         wordWrap: { width: cardW - 18 },
-      }).setOrigin(0.5).setScrollFactor(1).setVisible(!def.close);
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
 
       const cost = this.scene.add.text(def.x, def.y + 48, "", {
         fontFamily: "Bungee",
@@ -655,7 +664,7 @@ export class SlotPanel {
         stroke: "#000000",
         strokeThickness: 7,
         align: "center",
-      }).setOrigin(0.5).setScrollFactor(1).setVisible(!def.close);
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
 
       bg.on("pointerover", () => bg.setFillStyle(0xffffff, 0.16));
       bg.on("pointerout", () => bg.setFillStyle(0xffffff, 0.08));
@@ -816,11 +825,7 @@ export class SlotPanel {
     this._overviewStatusSecondary?.setText(secondary ?? "");
     this._overviewStatusPrimary?.setVisible(true);
     this._overviewStatusSecondary?.setVisible(true);
-    this._overviewFavorBg?.setVisible(false);
-    this._overviewFavorLabel?.setVisible(false);
-    this.overviewGridObjects?.forEach(o => o.setVisible(false));
-    this._overviewPressureObjects?.forEach(o => o.setVisible(false));
-    this._overviewMilitiaObjects?.forEach(o => o.setVisible(false));
+    this._hideAllOverviewObjects({ includeStatus: false });
   }
 
   _hideOverviewStatus() {
@@ -838,10 +843,7 @@ export class SlotPanel {
     if (hasActiveContract) {
       this.frameG?.setVisible(false);
       this.gridObjects?.forEach(o => o.setVisible(false));
-      this.overviewGridObjects?.forEach(o => o.setVisible(false));
-      this._overviewPressureObjects?.forEach(o => o.setVisible(false));
-      this._overviewMilitiaObjects?.forEach(o => o.setVisible(false));
-      this._overviewFavorLabel?.setVisible(false);
+      this._hideAllOverviewObjects();
       this._hideOverviewStatus();
       this._pressureText?.setVisible(false);
       this._refreshDetailedProxyVisual();
@@ -850,10 +852,7 @@ export class SlotPanel {
 
     if (this.mode !== "overview") {
       this.frameG?.setVisible(this.container.visible);
-      this.overviewGridObjects?.forEach(o => o.setVisible(false));
-      this._overviewPressureObjects?.forEach(o => o.setVisible(false));
-      this._overviewMilitiaObjects?.forEach(o => o.setVisible(false));
-      this._overviewFavorLabel?.setVisible(false);
+      this._hideAllOverviewObjects();
       this._hideOverviewStatus();
       this._pressureText?.setVisible(false);
       this.gridObjects?.forEach(o => o.setVisible(false));
@@ -864,9 +863,7 @@ export class SlotPanel {
     if (this._pressureMode) {
       this.frameG?.setVisible(this.container.visible);
       this.gridObjects?.forEach(o => o.setVisible(false));
-      this._overviewPressureObjects?.forEach(o => o.setVisible(false));
-      this._overviewMilitiaObjects?.forEach(o => o.setVisible(false));
-      this._overviewFavorLabel?.setVisible(false);
+      this._hideAllOverviewObjects({ includeStatus: false });
       return;
     }
 

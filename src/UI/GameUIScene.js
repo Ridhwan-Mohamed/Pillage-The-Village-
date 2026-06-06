@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { UIDEPTH, getAlertTone } from "../constants";
 import { DailyNeedsTracker } from "./DailyNeedsTracker";
-import { Clock } from "../Controllers/Clock";
+import { Clock, CLOCK_PHASE_HOURS } from "../Controllers/Clock";
 import { CreateBottomBar } from "./BottomBar/BottomBar";
 import { StageState } from "../parcelController/StageState";
 import { ContractHud } from "./ContractHud.js";
@@ -2058,22 +2058,22 @@ export class GameUIScene extends Phaser.Scene {
     const phaseSegments = [
       {
         key: "dawn",
-        ranges: [[6, 7]],
+        ranges: [[CLOCK_PHASE_HOURS.dawnStart, CLOCK_PHASE_HOURS.dayStart]],
         color: 0x7dd3fc,
       },
       {
         key: "day",
-        ranges: [[7, 16]],
+        ranges: [[CLOCK_PHASE_HOURS.dayStart, CLOCK_PHASE_HOURS.duskStart]],
         color: 0x4ade80,
       },
       {
         key: "dusk",
-        ranges: [[16, 18]],
+        ranges: [[CLOCK_PHASE_HOURS.duskStart, CLOCK_PHASE_HOURS.nightStart]],
         color: 0xfb923c,
       },
       {
         key: "night",
-        ranges: [[18, 30]],
+        ranges: [[CLOCK_PHASE_HOURS.nightStart, CLOCK_PHASE_HOURS.nightEnd + 24]],
         color: 0xf87171,
       },
     ];
@@ -5715,13 +5715,15 @@ export class GameUIScene extends Phaser.Scene {
   }
 
   setBossTarget(target = null) {
-    this._bossTarget = target?.active ? target : null;
+    const nextTarget = target?.active ? target : null;
+    const changed = this._bossTarget !== nextTarget;
+    this._bossTarget = nextTarget;
     if (!this._bossTarget) {
       this._destroyBossHud();
       return;
     }
     if (!this.bossHud) this._buildBossHud();
-    this._refreshBossHud(true);
+    this._refreshBossHud(changed);
   }
 
   _buildBossHud() {
@@ -5762,6 +5764,15 @@ export class GameUIScene extends Phaser.Scene {
     this.bossHud = root;
   }
 
+  _getBottomBarTopForHud() {
+    const bounds = this.uiBottomBar?.ui?.getBounds?.();
+    const top = Number(bounds?.top);
+    if (Number.isFinite(top) && top > 0 && top < this.scale.height) {
+      return top;
+    }
+    return null;
+  }
+
   _refreshBossHud(force = false) {
     const boss = this._bossTarget;
     if (!boss?.active) {
@@ -5779,12 +5790,18 @@ export class GameUIScene extends Phaser.Scene {
     const width = Math.max(360, Math.min(this.scale.width - 54, 760));
     const height = 54;
     const x = Math.round(this.scale.width / 2);
-    const y = Math.round(this.scale.height - bottomReserve - 46);
+    const bottomBarTop = this._getBottomBarTopForHud();
+    let y = Math.round(this.scale.height - bottomReserve - 46);
+    if (Number.isFinite(bottomBarTop)) {
+      y = Math.min(y, Math.round(bottomBarTop - 14 - height / 2));
+    }
+    y = Math.max(82, y);
     const portraitSize = 62;
     const barLeft = -width / 2 + 90;
     const barWidth = width - 122;
     const ratio = Phaser.Math.Clamp(Number(boss.health || 0) / Math.max(1, Number(boss.maxHealth || 1)), 0, 1);
-    const signature = `${boss.id}|${boss.health}|${boss.maxHealth}|${width}|${y}`;
+    const portraitKey = getPlayerPortraitKey(boss);
+    const signature = `${boss.id}|${boss.health}|${boss.maxHealth}|${width}|${y}|${bottomBarProgress}|${bottomBarTop ?? "fallback"}|${portraitKey}`;
     if (!force && signature === root._signature) return;
     root._signature = signature;
     root.setVisible(true);
@@ -5819,7 +5836,7 @@ export class GameUIScene extends Phaser.Scene {
     root.portraitPlate.strokeRoundedRect(-width / 2 + 12, -portraitSize / 2, 66, portraitSize, 16);
 
     root.portrait.setPosition(-width / 2 + 45, 0);
-    applyPortraitKeyToSprite(this, root.portrait, getPlayerPortraitKey(boss), 44);
+    applyPortraitKeyToSprite(this, root.portrait, portraitKey, 44);
 
     root.title.setText((boss.name || "BOSS").toUpperCase()).setPosition(barLeft, -20);
     root.value.setText(`${Math.max(0, Math.ceil(Number(boss.health || 0)))} / ${Math.max(1, Math.ceil(Number(boss.maxHealth || 1)))}`).setPosition(barLeft + barWidth, -20);

@@ -29,7 +29,7 @@ const MAX_CARRY = 1;
 
 export class Fireman {
 
-    static speed = 85;
+    static speed = 100;
     static stamina = 0.005;
 
     static preload(scene) {

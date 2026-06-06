@@ -949,7 +949,7 @@ export class MainMenu {
     static startMenuPhase() {
         const scene = MainMenu.scene;
         if (!scene) return;
-        AudioManager.startMenuOceanAmbience({ volume: 1 });
+        AudioManager.startMenuOceanAmbience({ volume: 0.15 });
         scene._menuModeActive = true;
 
         const overlayScene = MainMenu._getOverlayScene(scene, { requireActive: true });

@@ -118,6 +118,17 @@ export class InterruptController {
     }
 
     static _cleanupRoleLocalRefs(troop, deferred) {
+        if (troop.isBuilder) {
+            AudioManager.setConstructionActive(troop, false);
+            if (troop.buildSwingTween) {
+                troop.buildSwingTween.remove();
+                troop.buildSwingTween = null;
+            }
+            if (troop.buildSwingFx) {
+                troop.buildSwingFx.destroy();
+                troop.buildSwingFx = null;
+            }
+        }
         if (troop.isFireman && !deferred) {
             this._releaseFiremanPending(troop);
             troop.skip = false;

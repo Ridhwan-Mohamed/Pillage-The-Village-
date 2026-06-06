@@ -127,6 +127,7 @@ export class Wall {
 
       // kill old sprite
       if (w.sprite) {
+        scene?.hideWallHoverCard?.(w.sprite, { immediate: true });
         w.sprite.destroy();
         w.sprite = null;
       }
@@ -184,6 +185,7 @@ export class Wall {
 
       // make clickable (you already have sprite; ensure interactive if needed)
       w.sprite.setInteractive({ useHandCursor: true });
+      w._bindHover();
 
       const def = w.isDoor
         ? TILE_TYPES[w.doorKey]
@@ -224,6 +226,7 @@ export class Wall {
     // Make sure current visuals reflect current HP (phase may change over time)
     w._applyVisuals();
     w._bindVisibility();
+    w._bindHover();
 
     return w;
   }
@@ -319,6 +322,7 @@ export class Wall {
     this.sprite.wallRef = this;
     this.sprite.isWall = true;
 
+    this._bindHover();
 
     this._wireEnemyClick();
 
@@ -376,6 +380,31 @@ export class Wall {
     if (!this.isDoor || !this.sprite) return;
     this.isOpen = !!open;
     this.sprite.setFrame(this._doorFrameFor(this.phase, this.isOpen));
+  }
+
+  _bindHover() {
+    if (!this.sprite || !this.scene) return;
+
+    this.sprite.wallRef = this;
+    this.sprite.isWall = true;
+    this.sprite.team = this.team;
+
+    if (!this.sprite.input) {
+      this.sprite.setInteractive({ cursor: "pointer" });
+    }
+
+    if (this.sprite._wallHoverBound === this) return;
+    this.sprite._wallHoverBound = this;
+
+    this.sprite.on("pointerover", (pointer) => {
+      this.scene?.showWallHoverCard?.(this, pointer);
+    });
+    this.sprite.on("pointerout", () => {
+      this.scene?.hideWallHoverCard?.(this);
+    });
+    this.sprite.once?.("destroy", () => {
+      this.scene?.hideWallHoverCard?.(this, { immediate: true });
+    });
   }
 
   _wireEnemyClick() {
@@ -502,6 +531,7 @@ export class Wall {
 
     // remove sprite
     if (this.sprite) {
+      this.scene?.hideWallHoverCard?.(this.sprite, { immediate: true });
       playBuildingCollapseSmoke(this, { width: SQUARESIZE, height: SQUARESIZE });
       this.sprite.destroy();
       this.sprite = null;

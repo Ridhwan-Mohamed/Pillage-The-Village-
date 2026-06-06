@@ -101,10 +101,13 @@ export function createPlayerPortraitAnimations(scene) {
   Object.keys(PORTRAIT_ASSETS).forEach((key) => {
     if (scene.anims.exists(key)) return;
     if (!scene.textures.exists(key)) return;
+    const texture = scene.textures.get(key);
+    const frameNames = texture?.getFrameNames?.() || [];
+    const frameCount = Math.max(1, frameNames.filter((name) => name !== "__BASE").length);
 
     scene.anims.create({
       key,
-      frames: scene.anims.generateFrameNumbers(key, { start: 0, end: 2 }),
+      frames: scene.anims.generateFrameNumbers(key, { start: 0, end: frameCount - 1 }),
       frameRate: PORTRAIT_FRAME_RATE,
       repeat: -1,
     });
@@ -130,6 +133,14 @@ export function applyPortraitKeyToSprite(scene, sprite, portraitKey, displayHeig
   if (!portraitKey) {
     sprite.setVisible(false);
     sprite.anims?.stop?.();
+    sprite._portraitKey = null;
+    return;
+  }
+
+  if (!scene.textures?.exists?.(portraitKey)) {
+    sprite.setVisible(false);
+    sprite.anims?.stop?.();
+    sprite._portraitKey = null;
     return;
   }
 
@@ -141,14 +152,25 @@ export function applyPortraitKeyToSprite(scene, sprite, portraitKey, displayHeig
     createPlayerPortraitAnimations(scene);
   }
 
-  sprite
-    .setVisible(true)
-    .setAlpha(1)
-    .setTexture(portraitKey)
-    .setDisplaySize(displayWidth, displayHeight);
+  const textureChanged = sprite.texture?.key !== portraitKey;
+  const sizeChanged =
+    sprite._portraitDisplayWidth !== displayWidth ||
+    sprite._portraitDisplayHeight !== displayHeight;
+
+  sprite.setVisible(true).setAlpha(1);
+  if (textureChanged) sprite.setTexture(portraitKey);
+  if (textureChanged || sizeChanged) {
+    sprite.setDisplaySize(displayWidth, displayHeight);
+    sprite._portraitDisplayWidth = displayWidth;
+    sprite._portraitDisplayHeight = displayHeight;
+  }
+  sprite._portraitKey = portraitKey;
 
   if (scene.anims?.exists?.(portraitKey)) {
-    sprite.play(portraitKey, true);
+    const currentAnimKey = sprite.anims?.currentAnim?.key ?? null;
+    if (currentAnimKey !== portraitKey || !sprite.anims?.isPlaying) {
+      sprite.play(portraitKey);
+    }
   } else {
     sprite.anims?.stop?.();
   }

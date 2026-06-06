@@ -155,6 +155,7 @@ function snapshotCropState(crop) {
     dailyWatered: !!crop.dailyWatered,
     growthStage: Math.max(0, Number(crop.growthStage || 0)),
     hasSeed: crop.hasSeed !== false,
+    harvestsRemaining: Math.max(0, Number(crop.harvestsRemaining || 0)),
   };
 }
 

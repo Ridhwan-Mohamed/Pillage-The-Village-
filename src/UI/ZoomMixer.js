@@ -9,6 +9,8 @@ import { paintOverviewTexture } from "./OverviewStylePainter";
 import { VisibilitySystem } from "./VisibilitySystem";
 import { DEFAULT_PLAYER_PORTRAIT_KEY, getPlayerPortraitKey } from "../players/playerPortraits";
 
+const OVERVIEW_PLAYER_MONIKER_DISPLAY_HEIGHT = 13 * 1.15;
+
 export class ZoomMixer {
   /** assign once from your scene: ZoomMixer.scene = this */
   static scene = null;
@@ -591,7 +593,7 @@ export class ZoomMixer {
       troop.name,   // description on hover
       troop.x, troop.y,
       portraitKey,
-      { displayHeight: 13 }
+      { displayHeight: OVERVIEW_PLAYER_MONIKER_DISPLAY_HEIGHT }
     );
 
     // On click: select troop, open details window

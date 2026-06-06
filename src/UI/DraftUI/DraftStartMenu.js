@@ -966,16 +966,8 @@ export class DraftStartMenu {
         .draft-town-name-input::placeholder {
           color:#050b10 !important;
           opacity:0.92 !important;
-          -webkit-text-stroke:1px #ffffff;
-          text-shadow:
-            0 1px 0 #ffffff,
-            1px 0 0 #ffffff,
-            -1px 0 0 #ffffff,
-            0 -1px 0 #ffffff,
-            1px 1px 0 #ffffff,
-            -1px 1px 0 #ffffff,
-            1px -1px 0 #ffffff,
-            -1px -1px 0 #ffffff !important;
+          -webkit-text-stroke:0.5px #ffffff;
+          text-shadow:0 0 1px rgba(255,255,255,0.72) !important;
         }
       `,
       inputStyle: `
@@ -991,16 +983,8 @@ export class DraftStartMenu {
         appearance:none;
         background:rgba(13,33,48,0.98);
         color:#050b10;
-        -webkit-text-stroke:1px #ffffff;
-        text-shadow:
-          0 1px 0 #ffffff,
-          1px 0 0 #ffffff,
-          -1px 0 0 #ffffff,
-          0 -1px 0 #ffffff,
-          1px 1px 0 #ffffff,
-          -1px 1px 0 #ffffff,
-          1px -1px 0 #ffffff,
-          -1px -1px 0 #ffffff;
+        -webkit-text-stroke:0.5px #ffffff;
+        text-shadow:0 0 1px rgba(255,255,255,0.72);
         outline:none;
         caret-color:#ffffff;
         letter-spacing:0.02em;

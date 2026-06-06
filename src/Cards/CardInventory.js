@@ -53,6 +53,30 @@ export function inventoryBucketForCard(cardOrId) {
   return card?.kind === MARKET_CARD_KIND.CONSUMABLE ? "consumables" : "deck";
 }
 
+export function buildCardAddedPayload(cardOrId, {
+  teamNumber = "1",
+  amount = 1,
+  source = "reward",
+  message = null,
+} = {}) {
+  const marketCard = getMarketCardDefinition(cardOrId);
+  const rawCard = cardOrId && typeof cardOrId === "object" ? cardOrId : null;
+  const card = marketCard || rawCard;
+  const bucket = marketCard?.kind === MARKET_CARD_KIND.CONSUMABLE ? "consumables" : "deck";
+  const noun = bucket === "consumables" ? "Consumable" : "Card";
+
+  return {
+    action: "added",
+    bucket,
+    cardId: card?.id ?? (typeof cardOrId === "string" ? cardOrId : null),
+    cardName: card?.name ?? card?.title ?? "Card",
+    amount: Math.max(1, Math.floor(Number(amount || 1))),
+    teamNumber: String(teamNumber),
+    source,
+    message: message || `${noun} added`,
+  };
+}
+
 export function ensureCardInventory(teamNumber = "1") {
   const team = Teams.getTeam?.(teamNumber) ?? Teams.teamLists?.[String(teamNumber)] ?? Teams.teamLists?.[teamNumber];
   if (!team) return createEmptyCardInventory();

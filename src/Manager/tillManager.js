@@ -46,15 +46,24 @@ export class tillManager {
             return;
         }
 
-        // Reward and reset
-        const reseeded = Teams.resetCrop(cropData);
-        if (reseeded) {
-            this.playReseedProcFeedback(cropData);
+        Teams.removeFromStateArray(sprite.body.team, "TeamFarmSpots", sprite.task);
+        Teams.removeFromStateArray(sprite.body.team, "cropList", sprite.task);
+
+        const harvestsRemaining = Math.max(1, Number(cropData.harvestsRemaining || Teams.CROP_HARVEST_CHARGES || 1));
+        if (harvestsRemaining > 1) {
+            cropData.harvestsRemaining = harvestsRemaining - 1;
+            cropData.sprite?.setFrame?.(1 + cropData.growthStage);
+            Teams.addFarmSpots(cropData.sprite, cropData.x, cropData.y);
+            Teams.syncCropWaterIndicator?.(cropData);
+        } else {
+            const reseeded = Teams.resetCrop(cropData);
+            if (reseeded) {
+                this.playReseedProcFeedback(cropData);
+            }
         }
         this.scene?.achievementSystem?.addStat?.("cropsHarvested", 1);
         StorageManager.addCarriedItem(sprite,UI_ITEM_TYPES.crop);
         AudioManager.playCropHarvest();
-        Teams.removeFromStateArray(sprite.body.team, "TeamFarmSpots", sprite.task);
         sprite.task = null;
         if (!StorageManager.tryCreateStorageDeliveryTask(sprite)) {
             Teams.movePlayerState(sprite, CONTROL_STATES.TRACK_MODE);
@@ -122,6 +131,7 @@ export class tillManager {
                 // reseed existing crop
                 existingCrop.hasSeed = true;
                 existingCrop.growthStage = 0;
+                existingCrop.harvestsRemaining = 0;
                 existingCrop.dailyWatered = false;
                 existingCrop.sprite.setFrame(1); // seeded soil
                 Teams.setCropForWatering(existingCrop);

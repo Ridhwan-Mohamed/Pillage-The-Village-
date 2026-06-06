@@ -19,7 +19,7 @@ function getFloorVal(cellVal){
 
 const ROAD_PAD = 1;
 const WALL_PAD = ROAD_PAD + 1; // walls sit one tile outside the road ring
-const DRAFT_SPAWN_ICON_DISPLAY_HEIGHT = 7 * 1.15;
+const DRAFT_SPAWN_ICON_TILE_FILL = 1;
 const DRAFT_SPAWN_ICON_HOVER_SCALE = 1.12;
 const DRAFT_SPAWN_ICON_HIT_PAD = 4;
 
@@ -49,7 +49,6 @@ export class DraftStartPreviewController {
     this.spawnIconContainer?.destroy?.();
     this.spawnIconContainer = this.worldScene.add.container(0, 0).setDepth(UIDEPTH - 1);
     this._spawnIcons = []; // Phaser Images
-    this._spawnIconBaseDisplayHeight = null;
     this._spawnPreviewVisible = true;
     this._hoveredSpawnPoint = null;
     this._hoveredSpawnIcon = null;
@@ -573,22 +572,22 @@ export class DraftStartPreviewController {
     }
   }
 
-  _getSpawnIconBaseDisplayHeight(zoom) {
-    if (!Number.isFinite(this._spawnIconBaseDisplayHeight) || this._spawnIconBaseDisplayHeight <= 0) {
-      const safeZoom = Number.isFinite(zoom) ? Math.max(0.0001, zoom) : 1;
-      this._spawnIconBaseDisplayHeight = DRAFT_SPAWN_ICON_DISPLAY_HEIGHT / safeZoom;
-    }
-    return this._spawnIconBaseDisplayHeight;
+  _getSpawnIconBaseDisplaySize(frameWidth = 1, frameHeight = 1) {
+    const maxFrameDimension = Math.max(1, Number(frameWidth || 1), Number(frameHeight || 1));
+    const maxDisplayDimension = SQUARESIZE * DRAFT_SPAWN_ICON_TILE_FILL;
+    return {
+      width: Math.round((Number(frameWidth || 1) / maxFrameDimension) * maxDisplayDimension),
+      height: Math.round((Number(frameHeight || 1) / maxFrameDimension) * maxDisplayDimension),
+    };
   }
 
-  _applyDraftPortrait(icon, portraitKey, zoom) {
+  _applyDraftPortrait(icon, portraitKey) {
     if (!icon) return;
     const key = portraitKey || DEFAULT_PLAYER_PORTRAIT_KEY;
     const frame = this.worldScene.textures.getFrame(key, 0);
     const frameWidth = frame?.width ?? 54;
     const frameHeight = frame?.height ?? 50;
-    const displayHeight = this._getSpawnIconBaseDisplayHeight(zoom);
-    const displayWidth = Math.round((frameWidth / frameHeight) * displayHeight);
+    const { width: displayWidth, height: displayHeight } = this._getSpawnIconBaseDisplaySize(frameWidth, frameHeight);
     const hoverScale = icon._draftSpawnHovered ? DRAFT_SPAWN_ICON_HOVER_SCALE : 1;
 
     icon.anims?.stop?.();
@@ -687,19 +686,18 @@ export class DraftStartPreviewController {
       const worldX = p.x * SQUARESIZE + SQUARESIZE / 2;
       const worldY = p.y * SQUARESIZE + SQUARESIZE / 2;
       const portraitKey = this._getDraftPortraitKey(p.type);
-      const zoom = this.worldScene?.cameras?.main?.zoom ?? 1;
 
       let icon = this._spawnIcons[i];
       if (!icon) {
         icon = this.worldScene.add.sprite(worldX, worldY, portraitKey, 0)
           .setOrigin(0.5)
           .setDepth(UIDEPTH - 1);
-        this._applyDraftPortrait(icon, portraitKey, zoom);
+        this._applyDraftPortrait(icon, portraitKey);
         this.spawnIconContainer.add(icon);
         this._spawnIcons[i] = icon;
       } else {
         icon.setPosition(worldX, worldY);
-        this._applyDraftPortrait(icon, portraitKey, zoom);
+        this._applyDraftPortrait(icon, portraitKey);
       }
       icon._draftSpawnPoint = p;
       p._icon = icon;
@@ -734,7 +732,6 @@ export class DraftStartPreviewController {
       for (const icon of this._spawnIcons) this._safeDestroyIcon(icon);
       this._spawnIcons.length = 0;
     }
-    this._spawnIconBaseDisplayHeight = null;
   }
 
   /**

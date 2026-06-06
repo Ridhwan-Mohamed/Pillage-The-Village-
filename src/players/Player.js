@@ -73,7 +73,8 @@ export class Player {
     static TIRED_STAMINA_RATIO = 0.26;
     static FIGHTER_CLOSE_THREAT_RADIUS = SQUARESIZE * 2;
     static FIGHTER_RECENT_ATTACKER_MS = 3200;
-    static FIGHTER_TARGET_STICKY_MS = 1400;
+    static FIGHTER_TARGET_STICKY_MS = 4200;
+    static FIGHTER_TARGET_PRIORITY_BREAK_DELTA = 20;
     static FIGHTER_SPREAD_MAX_EXTRA_DISTANCE = SQUARESIZE * 4;
     static FIGHTER_SPREAD_MAX_RATIO = 1.8;
     static GUNSLINGER_DANGER_RADIUS = SQUARESIZE * 4;
@@ -150,6 +151,8 @@ export class Player {
         this._clearStatusEmote(player);
         this._removePlayerFromHouse(player);
         this._dropTargetingAgainstUnit(player);
+        OrderRunner.handleTroopDestroyed?.(player);
+        AudioManager.onSpriteDestroyed?.(player);
 
         // Call the troop-specific destroy logic if defined
         if (typeof player.destroySelf === 'function') {
@@ -2496,9 +2499,6 @@ export class Player {
     }
 
     static _chooseImmediateFighterTarget(troop, candidates = [], currentTarget = null, opts = {}) {
-        const closeTarget = this._getClosestCloseThreat(troop, candidates, opts.closeRadius ?? this.FIGHTER_CLOSE_THREAT_RADIUS);
-        if (closeTarget) return closeTarget;
-
         const recentAttacker = this._getRecentCombatAttacker(troop);
         if (recentAttacker && candidates.includes(recentAttacker)) return recentAttacker;
 
@@ -2513,6 +2513,9 @@ export class Player {
         ) {
             return currentTarget;
         }
+
+        const closeTarget = this._getClosestCloseThreat(troop, candidates, opts.closeRadius ?? this.FIGHTER_CLOSE_THREAT_RADIUS);
+        if (closeTarget) return closeTarget;
 
         return null;
     }
@@ -2537,15 +2540,27 @@ export class Player {
         const valid = candidates.filter(enemy => this._isEnemyCandidateForTroop(troop, enemy));
         if (!valid.length) return null;
 
+        const currentTarget = opts.currentTarget ?? troop.track?.[0]?.gameObject ?? null;
+        const recentAttacker = this._getRecentCombatAttacker(troop);
+        if (recentAttacker && valid.includes(recentAttacker)) return recentAttacker;
+
+        if (
+            currentTarget?.active &&
+            valid.includes(currentTarget) &&
+            this._isShootableTarget(troop, currentTarget, troop.weapon) &&
+            (
+                this._isStickyCombatTarget(troop, currentTarget) ||
+                this._isCommittedToCombatTarget(troop, currentTarget)
+            )
+        ) {
+            return currentTarget;
+        }
+
         const shootable = this._chooseClosestShootableTarget(troop, valid);
         if (shootable) return shootable;
 
-        const currentTarget = opts.currentTarget ?? troop.track?.[0]?.gameObject ?? null;
         const closeTarget = this._getClosestCloseThreat(troop, valid, this.GUNSLINGER_DANGER_RADIUS);
         if (closeTarget) return closeTarget;
-
-        const recentAttacker = this._getRecentCombatAttacker(troop);
-        if (recentAttacker && valid.includes(recentAttacker)) return recentAttacker;
 
         const emergencyCandidates = Array.isArray(opts.emergencyCandidates)
             ? opts.emergencyCandidates.filter(enemy => valid.includes(enemy))
@@ -2756,13 +2771,28 @@ export class Player {
         return Phaser.Math.Distance.Between(troop.x, troop.y, target.x, target.y) <= commitDistance;
     }
 
-    static _shouldKeepTownDefenseTarget(troop, currentTarget, candidates, emergencyCandidates) {
+    static _hasMuchHigherTownDefenseThreat(troop, currentTarget, candidates, townCenter) {
+        if (!currentTarget?.active || !Array.isArray(candidates) || candidates.length <= 1) return false;
+        const currentPriority = this._townDefensePriority(troop, currentTarget, townCenter);
+        let bestOtherPriority = currentPriority;
+
+        for (const enemy of candidates) {
+            if (enemy === currentTarget) continue;
+            const priority = this._townDefensePriority(troop, enemy, townCenter);
+            if (priority < bestOtherPriority) bestOtherPriority = priority;
+        }
+
+        return (currentPriority - bestOtherPriority) >= this.FIGHTER_TARGET_PRIORITY_BREAK_DELTA;
+    }
+
+    static _shouldKeepTownDefenseTarget(troop, currentTarget, candidates, emergencyCandidates, townCenter = null) {
         if (!currentTarget?.active || !currentTarget?.body) return false;
         if (!candidates.includes(currentTarget)) return false;
 
         const currentIsEmergency = this._isTownDefenseEmergencyEnemy(troop, currentTarget);
         if (emergencyCandidates.length && !currentIsEmergency) return false;
         if (this._townDefenseReachTier(currentTarget) > 0 && !currentIsEmergency) return false;
+        if (this._hasMuchHigherTownDefenseThreat(troop, currentTarget, candidates, townCenter)) return false;
 
         return (
             this._isCommittedToCombatTarget(troop, currentTarget) ||
@@ -2841,7 +2871,31 @@ export class Player {
             }
         }
 
-        const immediateTarget = this._chooseImmediateFighterTarget(troop, candidates, currentTarget, {
+        const currentIsEmergency = !!(currentTarget?.active && this._isTownDefenseEmergencyEnemy(troop, currentTarget));
+        const immediateCandidates = emergencyCandidates.length && !currentIsEmergency
+            ? emergencyCandidates
+            : candidates;
+
+        const recentAttacker = this._getRecentCombatAttacker(troop);
+        if (recentAttacker?.body && immediateCandidates.includes(recentAttacker)) {
+            const previousBody = troop.track?.[0] ?? null;
+            const movedTile = this._syncTrackToTarget(troop, recentAttacker);
+            return {
+                target: recentAttacker,
+                shouldRepath: movedTile || previousBody !== recentAttacker.body || (!troop.currentPath?.length && !this._isAttackReady(troop, recentAttacker)),
+            };
+        }
+
+        if (this._shouldKeepTownDefenseTarget(troop, currentTarget, candidates, emergencyCandidates, townCenter)) {
+            const previousBody = troop.track?.[0] ?? null;
+            const movedTile = this._syncTrackToTarget(troop, currentTarget);
+            return {
+                target: currentTarget,
+                shouldRepath: movedTile || previousBody !== currentTarget.body || (!troop.currentPath?.length && !this._isAttackReady(troop, currentTarget)),
+            };
+        }
+
+        const immediateTarget = this._chooseImmediateFighterTarget(troop, immediateCandidates, currentTarget, {
             allowSticky: false,
             closeRadius: this.FIGHTER_CLOSE_THREAT_RADIUS,
         });
@@ -2854,14 +2908,6 @@ export class Player {
             };
         }
 
-        if (this._shouldKeepTownDefenseTarget(troop, currentTarget, candidates, emergencyCandidates)) {
-            const previousBody = troop.track?.[0] ?? null;
-            const movedTile = this._syncTrackToTarget(troop, currentTarget);
-            return {
-                target: currentTarget,
-                shouldRepath: movedTile || previousBody !== currentTarget.body || (!troop.currentPath?.length && !this._isAttackReady(troop, currentTarget)),
-            };
-        }
         const target = CombatSpacingCoordinator.chooseBestEnemyTarget(troop, emergencyCandidates.length ? emergencyCandidates : candidates, {
             anchor: townCenter,
             currentTarget,
@@ -2925,6 +2971,9 @@ export class Player {
 
             troop.track[1].x = target.x;
             troop.track[1].y = target.y;
+        }
+        if (this._isFighterUnit(troop)) {
+            this._markCombatTargetSticky(troop, target);
         }
         return movedTile;
     }
@@ -3098,6 +3147,14 @@ export class Player {
         );
         const neighbours = Player.scene.physics.overlapCirc(troop.x, troop.y, overlapDist);
         const isPlayerFighter = troop.body?.team === 1 && this._isFighterUnit(troop) && hasWeapon;
+        const isFriendlyNonCombatant = troop.body?.team === 1 && !hasWeapon;
+
+        // Worker safety needs to outrank fixed objective tasks such as repairing.
+        if (isFriendlyNonCombatant) {
+            const closest = this.findClosestEnemyBody(troop, neighbours);
+            this._handleNonCombatFlee(troop, closest);
+            return;
+        }
 
         const isObjectiveTaskState =
             troop.state === CONTROL_STATES.DESTROY_MODE ||
@@ -3114,13 +3171,6 @@ export class Player {
             Player.handleStateIntteruptStart(troop, CONTROL_STATES.TRACK_TARGET);
             this._syncTrackToTarget(troop, defenseTarget);
             troop.roam = false;
-        }
-
-        // 🟡 NON-COMBATANTS (no weapon) → FLEE
-        if (!hasWeapon) {
-            const closest = this.findClosestEnemyBody(troop, neighbours);
-            this._handleNonCombatFlee(troop, closest);
-            return;
         }
 
         if (this._clearInvalidForcedTarget(troop)) return;

@@ -370,8 +370,14 @@ export const POWERUP_CARDS = [
         target: "clayOven",
         OUTLINE: "#8b4513",
         rarity: RARITY.common,
-        apply: () => divideStat(ClayOven, "cookDuration", SPEED_30),
-        remove: () => multiplyStat(ClayOven, "cookDuration", SPEED_30),
+        apply: () => {
+            divideStat(ClayOven, "cookDuration", SPEED_30);
+            divideStat(ClayOven, "waterCookDuration", SPEED_30);
+        },
+        remove: () => {
+            multiplyStat(ClayOven, "cookDuration", SPEED_30);
+            multiplyStat(ClayOven, "waterCookDuration", SPEED_30);
+        },
     }),
     makeCard({
         id: "sleep_regen_2x",
