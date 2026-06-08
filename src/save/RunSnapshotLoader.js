@@ -292,6 +292,40 @@ function rebuildBuildingRegistry(scene) {
   return registry;
 }
 
+const AUTO_REPAIRABLE_BUILDING_TYPES = new Set([
+  "house1",
+  "house2",
+  "storage",
+  "clayOven",
+  "tower",
+]);
+
+function getBuildingTypeKey(building, entry = null) {
+  return building?.tileType?.name
+    || building?.buildType?.name
+    || building?.type?.name
+    || entry?.[2]?.name
+    || null;
+}
+
+function rebuildRestoredBuildingFixTasks() {
+  for (const [teamId, team] of Object.entries(Teams.teamLists || {})) {
+    if (!team) continue;
+    if (Array.isArray(team.buildingFixTasks)) {
+      team.buildingFixTasks.forEach((task) => buildingManager.clearFixTaskVisual?.(task));
+    }
+    team.buildingFixTasks = [];
+
+    for (const entry of team.buildings || []) {
+      const building = entry?.[3]?.buildingRef;
+      if (!building) continue;
+      const typeKey = getBuildingTypeKey(building, entry);
+      if (!AUTO_REPAIRABLE_BUILDING_TYPES.has(typeKey)) continue;
+      buildingManager.queueAutoFixForBuilding?.(building, Number(teamId));
+    }
+  }
+}
+
 function restoreWalls(snapshotWalls = []) {
   for (const saved of snapshotWalls) {
     const teamId = Number(saved.teamId ?? 1);
@@ -361,6 +395,55 @@ function restoreTeamSnapshots(snapshot) {
     team.cardHand = (saved.cardIds || []).map((id) => CARD_REGISTRY.get(id)).filter(Boolean);
     team.cardInventory = restoreCardInventorySnapshot(saved.cardInventory);
   }
+}
+
+function normalizeRestoredTownXpState(scene, savedTownXp = null) {
+  const defaults = scene?._createTownXpState?.() ?? {};
+  const saved = savedTownXp && typeof savedTownXp === "object"
+    ? cloneSimple(savedTownXp, {})
+    : {};
+  const state = {
+    ...defaults,
+    ...saved,
+  };
+
+  const level = Math.max(1, Number(state.level || defaults.level || 1));
+  state.level = level;
+  state.xpIntoLevel = Math.max(0, Number(state.xpIntoLevel || 0));
+  state.xpForNextLevel = Math.max(
+    1,
+    Number(scene?._getTownXpRequirement?.(level) ?? state.xpForNextLevel ?? defaults.xpForNextLevel ?? 1)
+  );
+  state.totalEarned = Math.max(0, Number(state.totalEarned || 0));
+  state.pendingLevelRewards = Math.max(0, Math.floor(Number(state.pendingLevelRewards || 0)));
+  state.gainSerial = Math.max(0, Number(state.gainSerial || 0));
+  state.lastGainAmount = Math.max(0, Number(state.lastGainAmount || 0));
+  state.lastGainLabel = String(state.lastGainLabel || "Town XP");
+  state.pendingMilitiaUnlockReward = !!state.pendingMilitiaUnlockReward;
+  state.militiaUnlockRewardShown = !!state.militiaUnlockRewardShown;
+  if (state.militiaUnlockRewardShown) {
+    state.pendingMilitiaUnlockReward = false;
+  }
+
+  const now = Number(scene?.time?.now || 0);
+  const hasPendingReward =
+    state.pendingLevelRewards > 0 ||
+    (state.pendingMilitiaUnlockReward && !state.militiaUnlockRewardShown);
+
+  const savedReadyAt = Math.max(0, Number(state.rewardReadyAt || 0));
+  state.rewardReadyAt = hasPendingReward
+    ? Math.min(savedReadyAt, now + 220)
+    : savedReadyAt;
+
+  scene._townXp = state;
+  scene._currentPhaseKey = scene.clock?.getPhaseKey?.() || scene._currentPhaseKey || null;
+
+  if (hasPendingReward) {
+    scene.time?.delayedCall?.(0, () => scene._tryPresentPendingTownXpReward?.());
+  }
+  scene._queueTownXpChanged?.({ immediate: true });
+
+  return state;
 }
 
 function getCropSpriteAt(x, y) {
@@ -598,7 +681,7 @@ export function restoreRunSnapshotIntoScene(scene, snapshot) {
       claimedContractIds: new Set(snapshot?.progression?.runStats?.claimedContractIds || []),
       defeatedEnemyIds: new Set(snapshot?.progression?.runStats?.defeatedEnemyIds || []),
     };
-    scene._townXp = cloneSimple(snapshot?.progression?.townXp, scene._townXp);
+    normalizeRestoredTownXpState(scene, snapshot?.progression?.townXp);
     scene._northFortArrival = cloneSimple(snapshot?.progression?.northFortArrival, scene._northFortArrival);
     scene._townTowerStats = cloneSimple(snapshot?.progression?.townTowerStats, scene._townTowerStats);
     scene._northFortMainIslandOrigin = cloneSimple(snapshot?.world?.northFortMainIslandOrigin, scene._northFortMainIslandOrigin);
@@ -612,6 +695,7 @@ export function restoreRunSnapshotIntoScene(scene, snapshot) {
         if (building) restoreBuildingState(building, saved);
       }
     }
+    rebuildRestoredBuildingFixTasks();
     rehydrateOvenQueues(buildingRegistry);
 
     restoreWalls(snapshot?.world?.walls || []);

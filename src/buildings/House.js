@@ -53,11 +53,11 @@ export class House {
             House.scene.add.image(x * SQUARESIZE, y * SQUARESIZE, houseType.name)
                 .setOrigin(0)
                 .setDepth(BLOCKDEPTH)
-                .setInteractive()
+                .setInteractive({ useHandCursor: true })
             )
                 .setOrigin(0)
                 .setDepth(BLOCKDEPTH)
-                .setInteractive()
+                .setInteractive({ useHandCursor: true })
                 .on('pointerdown', () => {
                     const scene = this.scene;
                     if (scene?.destroyWallMode) return;

@@ -15,6 +15,8 @@ import { buildMarketPriceTable, getGoldOrePayout } from "../balance/GameBalance.
 import { cloneSlotFavor } from "./SlotFavorSystem.js";
 import { VisibilitySystem } from "../UI/VisibilitySystem.js";
 
+const MILITIA_CONTRACT_MS = 80_000;
+
 function fmtMMSS(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
   const hh = Math.floor(s / 3600);
@@ -91,9 +93,16 @@ export class ParcelContractInstance {
     this.spawnerCount = 0;
 
     this.timerText = null;
+    this.timerLabelBg = null;
+    this._timerPresentationMode = null;
   }
 
   _ensureTimerText() {
+    if (!this.timerLabelBg?.active) {
+      this.timerLabelBg = this.scene.add.graphics()
+        .setDepth(9998)
+        .setVisible(false);
+    }
     if (this.timerText) return;
 
     const cx = (this.origin.x + PARCEL_SIZE / 2) * SQUARESIZE;
@@ -108,8 +117,82 @@ export class ParcelContractInstance {
     }).setOrigin(0.5, 1).setDepth(9999);
   }
 
+  _getTimerLabelAnchor(isOverview = false) {
+    const x = (this.origin.x + PARCEL_SIZE / 2) * SQUARESIZE;
+    const isSouthOverview = isOverview && this.slotId === "S";
+    const y = isSouthOverview
+      ? (this.origin.y + PARCEL_SIZE + 1) * SQUARESIZE
+      : (this.origin.y - 1) * SQUARESIZE;
+
+    return {
+      x,
+      y,
+      originY: isSouthOverview ? 0 : 1,
+      backgroundY: isSouthOverview ? -3 : null,
+    };
+  }
+
+  _syncTimerTextPresentation() {
+    if (!this.timerText?.active) return;
+
+    const isOverview = this.scene?.zoomMixer?.mode === "overview";
+    const anchor = this._getTimerLabelAnchor(isOverview);
+    const modeKey = isOverview ? "overview" : "detailed";
+    const cameraZoom = Number(this.scene?.cameras?.main?.zoom ?? 1);
+    const overviewScale = cameraZoom > 0
+      ? Math.min(4, Math.max(1, 1 / cameraZoom))
+      : 1;
+    const scale = isOverview ? overviewScale : 1;
+
+    if (this._timerPresentationMode !== modeKey) {
+      this._timerPresentationMode = modeKey;
+      this.timerText
+        .setFontSize(isOverview ? "15px" : "14px")
+        .setColor(isOverview ? "#fff7d6" : "#ffffff")
+        .setStroke(isOverview ? "#06111d" : "#000000", isOverview ? 5 : 4)
+        .setDepth(isOverview ? 10002 : 9999);
+    }
+
+    this.timerText
+      .setPosition(anchor.x, anchor.y)
+      .setOrigin(0.5, anchor.originY)
+      .setScale(scale);
+
+    if (!isOverview) {
+      this.timerLabelBg?.clear?.();
+      this.timerLabelBg?.setVisible?.(false);
+      return;
+    }
+
+    if (!this.timerLabelBg?.active) return;
+
+    const padX = 9;
+    const padY = 5;
+    const w = Math.ceil((this.timerText.width || 0) + padX * 2);
+    const h = Math.ceil((this.timerText.height || 0) + padY * 2);
+    const radius = Math.min(10, Math.max(4, Math.floor(h / 2)));
+    const backgroundY = anchor.backgroundY ?? (-h + 3);
+
+    this.timerLabelBg
+      .clear()
+      .setPosition(this.timerText.x, this.timerText.y)
+      .setScale(scale)
+      .setDepth((this.timerText.depth ?? 10002) - 1)
+      .setVisible(true);
+    this.timerLabelBg.fillStyle(0x06111d, 0.82);
+    this.timerLabelBg.fillRoundedRect(-w / 2, backgroundY, w, h, radius);
+    this.timerLabelBg.lineStyle(1.5, 0xfff1bd, 0.34);
+    this.timerLabelBg.strokeRoundedRect(-w / 2, backgroundY, w, h, radius);
+  }
+
   _getSimulationNowMs() {
     return Number(this.scene?.getSimulationNow?.() ?? this.scene?.simNowMs ?? 0);
+  }
+
+  _getMilitiaDurationMs(value = null) {
+    const raw = Number(value ?? this.contractDurationMs ?? MILITIA_CONTRACT_MS);
+    if (!Number.isFinite(raw) || raw <= 0) return MILITIA_CONTRACT_MS;
+    return raw > 120_000 ? MILITIA_CONTRACT_MS : raw;
   }
 
   _setHudLifecycle(next = "active") {
@@ -123,24 +206,23 @@ export class ParcelContractInstance {
   _updateTimerText() {
     if (!this.timerText) return;
     const label = this.type === "FARM" ? "FIELD" : this.type;
+    let nextText = "";
 
     if (this.type === "PRESSURE") {
-      this.timerText.setText(`FIGHT ${this.killed}/${this.totalPlannedEnemies}`);
-      return;
-    }
-    if (this.type === "MARKET") {
+      nextText = `FIGHT ${this.killed}/${this.totalPlannedEnemies}`;
+    } else if (this.type === "MARKET") {
       const remaining = this.expireAt ? (this.expireAt - this._getSimulationNowMs()) : 0;
-      this.timerText.setText(`MARKET ${fmtMMSS(remaining)}`);
-      return;
-    }
-    if (this.type === "MILITIA") {
-      const remaining = this.expireAt ? (this.expireAt - Date.now()) : 0;
-      this.timerText.setText(`MILITIA ${fmtMMSS(remaining)}`);
-      return;
+      nextText = `MARKET ${fmtMMSS(remaining)}`;
+    } else if (this.type === "MILITIA") {
+      const remaining = this.expireAt ? (this.expireAt - this._getSimulationNowMs()) : 0;
+      nextText = `MILITIA ${fmtMMSS(remaining)}`;
+    } else {
+      const remaining = this.expireAt ? (this.expireAt - this._getSimulationNowMs()) : 0;
+      nextText = `${label} ${fmtMMSS(remaining)}`;
     }
 
-    const remaining = this.expireAt ? (this.expireAt - this._getSimulationNowMs()) : 0;
-    this.timerText.setText(`${label} ${fmtMMSS(remaining)}`);
+    this.timerText.setText(nextText);
+    this._syncTimerTextPresentation();
   }
 
   _startUITick() {
@@ -164,6 +246,11 @@ export class ParcelContractInstance {
       this.timerText.destroy();
       this.timerText = null;
     }
+    if (this.timerLabelBg) {
+      this.timerLabelBg.destroy();
+      this.timerLabelBg = null;
+    }
+    this._timerPresentationMode = null;
   }
 
   _footprintTouchesWater(gx, gy, lenX, lenY, pad = 1) {
@@ -402,6 +489,10 @@ export class ParcelContractInstance {
 
     obj.contractId = this.id;
     obj.slotId = this.slotId;
+    obj.isTemporaryMilitia = true;
+    obj.maxAmmo = kind === "catapult" ? 3 : 5;
+    obj.ammoRemaining = obj.maxAmmo;
+    obj.updateHealthBar?.();
     this.placedObjects.push(obj);
     return obj;
   }
@@ -1150,10 +1241,11 @@ export class ParcelContractInstance {
     }
 
     if (this.type === "MILITIA") {
-      const ms = 24 * 60 * 60 * 1000; // 1 real-world day
+      const ms = this._getMilitiaDurationMs();
+      this.contractDurationMs = ms;
 
       this._spawnMilitiaFormation();
-      this.expireAt = Date.now() + ms;
+      this.expireAt = this._getSimulationNowMs() + ms;
 
       this._startUITick();
       this.timerEvent = this.scene.time.delayedCall(ms, () => this.complete("timeout"), null, this);
@@ -1271,6 +1363,15 @@ export class ParcelContractInstance {
     this.militiaConfig = saved.militiaConfig ? { ...saved.militiaConfig } : this.militiaConfig;
     this.slotFavor = cloneSlotFavor(saved.slotFavor ?? this.slotFavor);
     this.contractDurationMs = Number(saved.contractDurationMs ?? this.contractDurationMs ?? 0) || null;
+    if (this.type === "MILITIA") {
+      const militiaMs = this._getMilitiaDurationMs(this.contractDurationMs);
+      this.contractDurationMs = militiaMs;
+      const savedExpireAt = Number(saved.expireAt ?? 0);
+      const simNow = this._getSimulationNowMs();
+      this.expireAt = Number.isFinite(savedExpireAt) && savedExpireAt > 0 && savedExpireAt < 10_000_000
+        ? Math.min(savedExpireAt, simNow + militiaMs)
+        : simNow + militiaMs;
+    }
     this.completionBonusMoney = Math.max(0, Number(saved.completionBonusMoney ?? this.completionBonusMoney ?? 0));
     this.pressureModifier = saved.pressureModifier ? { ...saved.pressureModifier } : this.pressureModifier;
     this.pressureModifierKey = saved.pressureModifierKey ?? this.pressureModifierKey;
@@ -1361,7 +1462,7 @@ export class ParcelContractInstance {
     if (this.type === "MILITIA") {
       this._spawnMilitiaFormation();
       this._startUITick();
-      const remaining = Math.max(0, Number(this.expireAt || 0) - Date.now());
+      const remaining = Math.max(0, Number(this.expireAt || 0) - this._getSimulationNowMs());
       this.timerEvent = this.scene.time.delayedCall(remaining, () => this.complete("timeout"), null, this);
       this._setHudLifecycle("active");
       return;

@@ -3017,7 +3017,12 @@ export class Player {
     }
 
     static _ensureFriendlySiegePlanner() {
-        if (!Map.playerSiegePlanner) {
+        const plannerStale =
+            !Map.playerSiegePlanner ||
+            Map.playerSiegePlanner.enemyNavGrid !== Map.navGrid ||
+            Map.playerSiegePlanner.regionSystem !== Map.regionSystem;
+
+        if (plannerStale) {
             Map.playerSiegePlanner = new SiegePlanner({
                 squareSize: SQUARESIZE,
                 enemyNavGrid: Map.navGrid,

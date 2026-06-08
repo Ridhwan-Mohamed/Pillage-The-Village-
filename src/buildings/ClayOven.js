@@ -107,7 +107,7 @@ export class ClayOven {
         this.isCooking = Array.from({ length: ClayOven.slotCount }, () => false);
         this.fuel = 0;
 
-        this.sprite.setInteractive();
+        this.sprite.setInteractive({ useHandCursor: true });
 
         this.sprite.on('pointerover', () => {
             this.isHovered = true;

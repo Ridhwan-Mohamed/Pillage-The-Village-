@@ -1,6 +1,7 @@
 import { showAlert } from "../constants.js";
 import { formatPermitCostText, getContractPermitCost } from "../permitSystem.js";
 import { getContractMoneyCost } from "../balance/GameBalance.js";
+import { PRESSURE } from "../parcel_system/ParcelConfig.js";
 import { hasStoreUnlock, STORE_UNLOCK_KEYS } from "../parcel_system/StoreUnlockSystem.js";
 import {
   getSlotFavorBannerText,
@@ -537,84 +538,7 @@ export class SlotPanel {
     this._refreshOverviewFavorLabel();
   }
 
-  _buildOverviewPressureMenu(cellW, cellH, innerW, innerH) {
-    const skull = "\u{1F480}";
-    const closeEmoji = "\u274C";
-    const gap = 12;
-    const pressureCardW = Math.floor((innerW - gap) / 2);
-    const pressureCardH = Math.floor((innerH - gap) / 2);
-    const leftX = -(pressureCardW / 2) - (gap / 2);
-    const rightX = (pressureCardW / 2) + (gap / 2);
-    const topY = -(pressureCardH / 2) - (gap / 2);
-    const bottomY = (pressureCardH / 2) + (gap / 2);
-    const defs = [
-      { difficulty: 1, emoji: skull, x: leftX, y: topY },
-      { difficulty: 2, emoji: skull.repeat(2), x: rightX, y: topY },
-      { difficulty: 3, emoji: skull.repeat(3), x: leftX, y: bottomY },
-      { close: true, emoji: closeEmoji, x: rightX, y: bottomY },
-    ];
-
-    this._overviewPressureCards = [];
-    this._overviewPressureObjects = [];
-
-    for (const def of defs) {
-      const bg = this.scene.add.rectangle(def.x, def.y, pressureCardW, pressureCardH, 0xffffff, 0.08)
-        .setStrokeStyle(2, 0xffffff, 0.28)
-        .setScrollFactor(1)
-        .setInteractive({ useHandCursor: true })
-        .setVisible(false);
-
-      const emoji = this.scene.add.text(def.x, def.y - (def.close ? 0 : 12), def.emoji, {
-        fontSize: def.close ? "64px" : def.difficulty === 3 ? "52px" : "62px",
-        color: def.close ? "#ff6b6b" : "#ffffff",
-        stroke: def.close ? "#3a0000" : "#001018",
-        strokeThickness: 8,
-      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
-
-      const cost = this.scene.add.text(def.x, def.y + 32, "", {
-        fontFamily: "Bungee",
-        fontSize: "24px",
-        color: "#ffffff",
-        stroke: "#000000",
-        strokeThickness: 7,
-        align: "center",
-      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
-
-      bg.on("pointerover", () => bg.setFillStyle(0xffffff, 0.16));
-      bg.on("pointerout", () => bg.setFillStyle(0xffffff, 0.08));
-      bg.on("pointerdown", () => bg.setFillStyle(0xffffff, 0.22));
-      bg.on("pointerup", () => {
-        bg.setFillStyle(0xffffff, 0.16);
-        if (this.mode !== "overview" || this._pressureMode || this._overviewMenu !== "PRESSURE") return;
-        if (def.close) {
-          this._closeOverviewDetailMenu();
-          return;
-        }
-        this.commit({ type: "PRESSURE", difficulty: def.difficulty });
-      });
-
-      this.container.add([bg, emoji, cost]);
-      this._overviewPressureObjects.push(bg, emoji, cost);
-      if (!def.close) this._overviewPressureCards.push({ def, costText: cost });
-    }
-  }
-
-  _refreshOverviewPressureCosts() {
-    const canBuy = this._canBuyContracts();
-    for (const card of this._overviewPressureCards) {
-      if (!card?.costText || card.def?.close) continue;
-      if (!canBuy) {
-        card.costText.setText("LOCK");
-        continue;
-      }
-      const permitCost = Number(getContractPermitCost("PRESSURE", card.def.difficulty, this.scene) ?? 0);
-      const moneyCost = getContractMoneyCost(this.scene, "PRESSURE", card.def.difficulty);
-      card.costText.setText(`${formatPermitCostText(permitCost)}\n$${moneyCost}`);
-    }
-  }
-
-  _buildOverviewMilitiaMenu(cellW, cellH, innerW, innerH) {
-    const closeEmoji = "❌";
+  _getOverviewChoiceLayout(innerW, innerH) {
     const gap = 12;
     const cardW = Math.floor((innerW - gap) / 2);
     const cardH = Math.floor((innerH - gap) / 2);
@@ -622,49 +546,220 @@ export class SlotPanel {
     const rightX = (cardW / 2) + (gap / 2);
     const topY = -(cardH / 2) - (gap / 2);
     const bottomY = (cardH / 2) + (gap / 2);
-    const defs = [
-      { difficulty: 1, x: leftX, y: topY },
-      { difficulty: 2, x: rightX, y: topY },
-      { difficulty: 3, x: leftX, y: bottomY },
-      { close: true, emoji: closeEmoji, x: rightX, y: bottomY },
-    ];
 
-    this._overviewMilitiaCards = [];
-    this._overviewMilitiaObjects = [];
+    return {
+      cardW,
+      cardH,
+      positions: [
+        { x: leftX, y: topY },
+        { x: rightX, y: topY },
+        { x: leftX, y: bottomY },
+        { x: rightX, y: bottomY },
+      ],
+    };
+  }
+
+  _getOverviewChoiceFontSizes(cardH) {
+    return {
+      title: Math.max(30, Math.min(54, Math.floor(cardH * 0.19))),
+      info: Math.max(20, Math.min(30, Math.floor(cardH * 0.105))),
+      cost: Math.max(26, Math.min(42, Math.floor(cardH * 0.15))),
+      close: Math.max(56, Math.min(96, Math.floor(cardH * 0.30))),
+      closeLabel: Math.max(24, Math.min(42, Math.floor(cardH * 0.14))),
+    };
+  }
+
+  _fitOverviewText(text, maxWidth, maxHeight, preferredSize, minSize = 14) {
+    if (!text) return;
+    const start = Math.max(minSize, Math.floor(Number(preferredSize) || minSize));
+    for (let size = start; size >= minSize; size--) {
+      text.setFontSize(`${size}px`);
+      if ((text.width || 0) <= maxWidth && (text.height || 0) <= maxHeight) return;
+    }
+    text.setFontSize(`${minSize}px`);
+  }
+
+  _buildOverviewPressureMenu(cellW, cellH, innerW, innerH) {
+    const { cardW, cardH, positions } = this._getOverviewChoiceLayout(innerW, innerH);
+    const sizes = this._getOverviewChoiceFontSizes(cardH);
+    const defs = [1, 2, 3].map((difficulty, index) => ({
+      difficulty,
+      ...positions[index],
+    }));
+
+    this._overviewPressureCards = [];
+    this._overviewPressureObjects = [];
 
     for (const def of defs) {
-      const tier = def.close ? null : getMilitiaTierConfig(def.difficulty);
+      const spawners = Math.max(1, Math.min(PRESSURE.maxDifficulty ?? 3, def.difficulty));
+      const enemies = spawners * (PRESSURE.baseEnemiesPerSpawner ?? 3);
       const bg = this.scene.add.rectangle(def.x, def.y, cardW, cardH, 0xffffff, 0.08)
         .setStrokeStyle(2, 0xffffff, 0.28)
         .setScrollFactor(1)
         .setInteractive({ useHandCursor: true })
         .setVisible(false);
 
-      const title = this.scene.add.text(def.x, def.y - 34, def.close ? def.emoji : `T${def.difficulty}`, {
-        fontSize: def.close ? "64px" : "50px",
-        color: def.close ? "#ff6b6b" : "#eef7ff",
-        stroke: def.close ? "#3a0000" : "#001018",
-        strokeThickness: 8,
-      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
-
-      const summary = this.scene.add.text(def.x, def.y + 2, def.close ? "" : tier.summary.toUpperCase(), {
+      const title = this.scene.add.text(def.x, def.y - cardH * 0.33, `RAID ${def.difficulty}`, {
         fontFamily: "Bungee",
-        fontSize: "12px",
-        color: "#d6f5ff",
+        fontSize: `${sizes.title}px`,
+        color: "#fff1f1",
         stroke: "#001018",
-        strokeThickness: 4,
+        strokeThickness: 8,
         align: "center",
-        wordWrap: { width: cardW - 18 },
+        wordWrap: { width: cardW - 24 },
       }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
 
-      const cost = this.scene.add.text(def.x, def.y + 48, "", {
+      const info = this.scene.add.text(def.x, def.y - cardH * 0.02, [
+        `${spawners} SPAWNER${spawners === 1 ? "" : "S"}`,
+        `${enemies} ENEMIES`,
+        "MONEY + XP",
+      ].join("\n"), {
         fontFamily: "Bungee",
-        fontSize: "20px",
+        fontSize: `${sizes.info}px`,
+        color: "#ffd6d6",
+        stroke: "#001018",
+        strokeThickness: 6,
+        align: "center",
+        lineSpacing: 7,
+        wordWrap: { width: cardW - 24 },
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+
+      const cost = this.scene.add.text(def.x, def.y + cardH * 0.34, "", {
+        fontFamily: "Bungee",
+        fontSize: `${sizes.cost}px`,
         color: "#ffffff",
         stroke: "#000000",
-        strokeThickness: 7,
+        strokeThickness: 8,
         align: "center",
+        lineSpacing: 4,
+        wordWrap: { width: cardW - 24 },
       }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+
+      this._fitOverviewText(title, cardW - 24, cardH * 0.22, sizes.title, 18);
+      this._fitOverviewText(info, cardW - 24, cardH * 0.38, sizes.info, 14);
+
+      bg.on("pointerover", () => bg.setFillStyle(0xffffff, 0.16));
+      bg.on("pointerout", () => bg.setFillStyle(0xffffff, 0.08));
+      bg.on("pointerdown", () => bg.setFillStyle(0xffffff, 0.22));
+      bg.on("pointerup", () => {
+        bg.setFillStyle(0xffffff, 0.16);
+        if (this.mode !== "overview" || this._pressureMode || this._overviewMenu !== "PRESSURE") return;
+        this.commit({ type: "PRESSURE", difficulty: def.difficulty });
+      });
+
+      this.container.add([bg, title, info, cost]);
+      this._overviewPressureObjects.push(bg, title, info, cost);
+      this._overviewPressureCards.push({ def, costText: cost, cardW, cardH, costSize: sizes.cost });
+    }
+
+    const close = positions[3];
+    const closeBg = this.scene.add.rectangle(close.x, close.y, cardW, cardH, 0x3a0000, 0.78)
+      .setStrokeStyle(3, 0xffa5a5, 0.72)
+      .setScrollFactor(1)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    const closeText = this.scene.add.text(close.x, close.y - cardH * 0.06, "\u274c", {
+      fontSize: `${sizes.close}px`,
+      stroke: "#3a0000",
+      strokeThickness: 10,
+    }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+    const closeLabel = this.scene.add.text(close.x, close.y + cardH * 0.29, "EXIT", {
+      fontFamily: "Bungee",
+      fontSize: `${sizes.closeLabel}px`,
+      color: "#ffe2e2",
+      stroke: "#000000",
+      strokeThickness: 8,
+      align: "center",
+      wordWrap: { width: cardW - 24 },
+    }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+    this._fitOverviewText(closeLabel, cardW - 24, cardH * 0.18, sizes.closeLabel, 16);
+    closeBg.on("pointerover", () => closeBg.setFillStyle(0x581c24, 0.96));
+    closeBg.on("pointerout", () => closeBg.setFillStyle(0x3a0000, 0.78));
+    closeBg.on("pointerup", () => this._closeOverviewDetailMenu());
+    this.container.add([closeBg, closeText, closeLabel]);
+    this._overviewPressureObjects.push(closeBg, closeText, closeLabel);
+  }
+
+  _refreshOverviewPressureCosts() {
+    const canBuy = this._canBuyContracts();
+    const favorTheme = this._getSlotFavorTheme();
+    const isSale = this._getSlotFavor()?.kind === "discount";
+    for (const card of this._overviewPressureCards) {
+      if (!card?.costText || card.def?.close) continue;
+      if (!canBuy) {
+        card.costText.setColor("#ffffff");
+        card.costText.setText("LOCKED");
+        this._fitOverviewText(card.costText, card.cardW - 24, card.cardH * 0.26, card.costSize, 18);
+        continue;
+      }
+      const permitCost = Number(getContractPermitCost("PRESSURE", card.def.difficulty, this.scene) ?? 0);
+      const purchase = this._getPurchaseContext("PRESSURE", card.def.difficulty);
+      const moneyCost = Math.max(0, Number(purchase?.moneyCost ?? getContractMoneyCost(this.scene, "PRESSURE", card.def.difficulty)));
+      card.costText.setColor(isSale ? "#ffb4b4" : favorTheme.priceColor);
+      card.costText.setText(`${formatPermitCostText(permitCost)}\n$${moneyCost}`);
+      this._fitOverviewText(card.costText, card.cardW - 24, card.cardH * 0.28, card.costSize, 18);
+    }
+  }
+
+  _buildOverviewMilitiaMenu(cellW, cellH, innerW, innerH) {
+    const { cardW, cardH, positions } = this._getOverviewChoiceLayout(innerW, innerH);
+    const sizes = this._getOverviewChoiceFontSizes(cardH);
+    const defs = [1, 2, 3].map((difficulty, index) => ({
+      difficulty,
+      ...positions[index],
+    }));
+
+    this._overviewMilitiaCards = [];
+    this._overviewMilitiaObjects = [];
+
+    for (const def of defs) {
+      const tier = getMilitiaTierConfig(def.difficulty);
+      const summary = String(tier.summary || "")
+        .toUpperCase()
+        .split("+")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join("\n");
+      const bg = this.scene.add.rectangle(def.x, def.y, cardW, cardH, 0xffffff, 0.08)
+        .setStrokeStyle(2, 0xffffff, 0.28)
+        .setScrollFactor(1)
+        .setInteractive({ useHandCursor: true })
+        .setVisible(false);
+
+      const title = this.scene.add.text(def.x, def.y - cardH * 0.33, `TIER ${def.difficulty}`, {
+        fontFamily: "Bungee",
+        fontSize: `${sizes.title}px`,
+        color: "#eef7ff",
+        stroke: "#001018",
+        strokeThickness: 8,
+        align: "center",
+        wordWrap: { width: cardW - 24 },
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+
+      const info = this.scene.add.text(def.x, def.y - cardH * 0.02, `${summary}\n1 DAY DEFENSE`, {
+        fontFamily: "Bungee",
+        fontSize: `${sizes.info}px`,
+        color: "#d6f5ff",
+        stroke: "#001018",
+        strokeThickness: 6,
+        align: "center",
+        lineSpacing: 7,
+        wordWrap: { width: cardW - 24 },
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+
+      const cost = this.scene.add.text(def.x, def.y + cardH * 0.34, "", {
+        fontFamily: "Bungee",
+        fontSize: `${sizes.cost}px`,
+        color: "#ffffff",
+        stroke: "#000000",
+        strokeThickness: 8,
+        align: "center",
+        lineSpacing: 4,
+        wordWrap: { width: cardW - 24 },
+      }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+
+      this._fitOverviewText(title, cardW - 24, cardH * 0.22, sizes.title, 18);
+      this._fitOverviewText(info, cardW - 24, cardH * 0.42, sizes.info, 14);
 
       bg.on("pointerover", () => bg.setFillStyle(0xffffff, 0.16));
       bg.on("pointerout", () => bg.setFillStyle(0xffffff, 0.08));
@@ -672,10 +767,6 @@ export class SlotPanel {
       bg.on("pointerup", () => {
         bg.setFillStyle(0xffffff, 0.16);
         if (this.mode !== "overview" || this._pressureMode || this._overviewMenu !== "MILITIA") return;
-        if (def.close) {
-          this._closeOverviewDetailMenu();
-          return;
-        }
         this.commit({
           type: "MILITIA",
           difficulty: def.difficulty,
@@ -686,23 +777,57 @@ export class SlotPanel {
         });
       });
 
-      this.container.add([bg, title, summary, cost]);
-      this._overviewMilitiaObjects.push(bg, title, summary, cost);
-      if (!def.close) this._overviewMilitiaCards.push({ def, costText: cost });
+      this.container.add([bg, title, info, cost]);
+      this._overviewMilitiaObjects.push(bg, title, info, cost);
+      this._overviewMilitiaCards.push({ def, costText: cost, cardW, cardH, costSize: sizes.cost });
     }
+
+    const close = positions[3];
+    const closeBg = this.scene.add.rectangle(close.x, close.y, cardW, cardH, 0x3a0000, 0.78)
+      .setStrokeStyle(3, 0xffa5a5, 0.72)
+      .setScrollFactor(1)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    const closeText = this.scene.add.text(close.x, close.y - cardH * 0.06, "\u274c", {
+      fontSize: `${sizes.close}px`,
+      stroke: "#3a0000",
+      strokeThickness: 10,
+    }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+    const closeLabel = this.scene.add.text(close.x, close.y + cardH * 0.29, "EXIT", {
+      fontFamily: "Bungee",
+      fontSize: `${sizes.closeLabel}px`,
+      color: "#ffe2e2",
+      stroke: "#000000",
+      strokeThickness: 8,
+      align: "center",
+      wordWrap: { width: cardW - 24 },
+    }).setOrigin(0.5).setScrollFactor(1).setVisible(false);
+    this._fitOverviewText(closeLabel, cardW - 24, cardH * 0.18, sizes.closeLabel, 16);
+    closeBg.on("pointerover", () => closeBg.setFillStyle(0x581c24, 0.96));
+    closeBg.on("pointerout", () => closeBg.setFillStyle(0x3a0000, 0.78));
+    closeBg.on("pointerup", () => this._closeOverviewDetailMenu());
+    this.container.add([closeBg, closeText, closeLabel]);
+    this._overviewMilitiaObjects.push(closeBg, closeText, closeLabel);
   }
 
   _refreshOverviewMilitiaCosts() {
     const canBuy = this._canBuyContracts();
+    const favorTheme = this._getSlotFavorTheme();
+    const isSale = this._getSlotFavor()?.kind === "discount";
     for (const card of this._overviewMilitiaCards) {
       if (!card?.costText || card.def?.close) continue;
       if (!canBuy) {
-        card.costText.setText("LOCK");
+        card.costText.setColor("#ffffff");
+        card.costText.setText("LOCKED");
+        this._fitOverviewText(card.costText, card.cardW - 24, card.cardH * 0.26, card.costSize, 18);
         continue;
       }
       const permitCost = Number(getContractPermitCost("MILITIA", card.def.difficulty, this.scene) ?? 0);
-      const moneyCost = getContractMoneyCost(this.scene, "MILITIA", card.def.difficulty);
+      const purchase = this._getPurchaseContext("MILITIA", card.def.difficulty);
+      const moneyCost = Math.max(0, Number(purchase?.moneyCost ?? getContractMoneyCost(this.scene, "MILITIA", card.def.difficulty)));
+      card.costText.setColor(isSale ? "#ffb4b4" : favorTheme.priceColor);
       card.costText.setText(`${formatPermitCostText(permitCost)}\n$${moneyCost}`);
+      this._fitOverviewText(card.costText, card.cardW - 24, card.cardH * 0.28, card.costSize, 18);
     }
   }
 

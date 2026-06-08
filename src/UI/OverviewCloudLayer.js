@@ -66,9 +66,7 @@ export class OverviewCloudLayer {
 
   setMode(mode = "detailed") {
     this.mode = mode;
-    const showCloud = this.mode === "overview";
     for (const c of this.clouds) {
-      c.sprite.setVisible(showCloud);
       this._syncShadow(c);
     }
   }
@@ -256,13 +254,13 @@ export class OverviewCloudLayer {
     s.scaleX = c.scaleX * 1.08;
     s.scaleY = c.scaleY * 1.08;
 
-    // Menu should always show bright white clouds even if zoom mode isn't overview yet.
-    const showCloudSprite = inOverview || inMenu;
+    // Menu and both gameplay zoom modes should render the white cloud body.
+    const showCloudSprite = inOverview || inMenu || this.mode === "detailed";
     c.setAlpha(showCloudSprite ? cloud.alpha : 0);
     c.setVisible(showCloudSprite);
 
-    // Suppress shadows in menu; darken gameplay overcast slightly.
-    const shadowBase = inMenu ? 0 : (inOverview ? 0.10 : 0.24);
+    // Suppress shadows in menu; keep gameplay shadows subtle so clouds read white.
+    const shadowBase = inMenu ? 0 : 0.10;
     const shadowAlpha = shadowBase * Phaser.Math.Clamp(cloud.alpha / Math.max(cloud.baseAlpha, 0.001), 0, 1);
     s.setAlpha(shadowAlpha);
     s.setVisible(shadowAlpha > 0.01);

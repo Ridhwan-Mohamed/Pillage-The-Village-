@@ -1022,8 +1022,8 @@ export class MainMenu {
         const parallaxNearLayer = overlayScene.add.container(0, 0);
         const parallaxEdgeLayer = overlayScene.add.container(0, 0);
         const logo = overlayScene.add.image(centerX, logoY, 'logo').setOrigin(0.5).setScale(logoScale);
-        const versionText = overlayScene.add.text(overlayScene.scale.width - 75, overlayScene.scale.height - 20, 'v0.9.9', {
-            fontSize: '18px',
+        const versionText = overlayScene.add.text(overlayScene.scale.width - 95, overlayScene.scale.height - 20, 'v0.9.9', {
+            fontSize: '28px',
             fill: '#ffffff',
             fontStyle: 'bold',
             fontFamily: 'Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif',
@@ -1189,12 +1189,27 @@ export class MainMenu {
 
             const versionPadX = Phaser.Math.Clamp(Math.round(width * 0.018), 14, 26);
             const versionPadY = Phaser.Math.Clamp(Math.round(height * 0.02), 12, 20);
+            const versionSafeLeft = Phaser.Math.Clamp(Math.round(width * 0.035), 16, 32);
+            const versionParallaxBleed = 14;
+            const versionTargetFontSize = 28;
             const topPad = Phaser.Math.Clamp(Math.round(Math.min(width, height) * 0.055), 30, 44);
 
             logo.setPosition(centerX, logoY).setScale(logoScale);
+            versionText.setFontSize(`${versionTargetFontSize}px`);
+            const versionAvailableWidth = Math.max(
+                24,
+                width - versionPadX - versionSafeLeft - versionParallaxBleed
+            );
+            if (versionText.width > versionAvailableWidth) {
+                const adjustedFontSize = Phaser.Math.Clamp(
+                    Math.floor(versionTargetFontSize * (versionAvailableWidth / Math.max(1, versionText.width))),
+                    12,
+                    versionTargetFontSize
+                );
+                versionText.setFontSize(`${adjustedFontSize}px`);
+            }
             versionText
-                .setPosition(width - versionPadX, height - versionPadY)
-                .setFontSize(`${Phaser.Math.Clamp(Math.round(Math.min(width, height) * 0.0175), 14, 18)}px`);
+                .setPosition(width - versionPadX, height - versionPadY);
 
             startButton._baseX = centerX;
             startButton._baseY = startButtonY;

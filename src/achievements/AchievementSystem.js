@@ -4,6 +4,10 @@ import { SaveManager } from "../save/SaveManager.js";
 const TEAM_ID = "1";
 const SLOT_ORDER = ["build", "economy", "combat"];
 const RECENT_HISTORY_LIMIT = 3;
+const MAX_HOUSE_GOAL_TARGET = 4;
+const MAX_STORAGE_GOAL_TARGET = 2;
+const MAX_OVEN_GOAL_TARGET = 2;
+const MAX_NORMAL_NIGHTS_SURVIVED_TARGET = 5;
 
 const SLOT_META = Object.freeze({
   build: {
@@ -635,7 +639,6 @@ export class AchievementSystem {
   }
 
   _getBuildCandidates() {
-    const houses = this.getMetricValue("houses");
     const storages = this.getMetricValue("storages");
     const ovens = this.getMetricValue("ovens");
     const fighters = this.getMetricValue("fighters");
@@ -644,11 +647,11 @@ export class AchievementSystem {
     const nights = this.getMetricValue("nightsSurvived");
     const candidates = [];
 
-    const houseTarget = nextMilestone(houses, [4, 5, 6, 8, 10, 12, 15], 3);
+    const houseTarget = MAX_HOUSE_GOAL_TARGET;
     candidates.push(this._makeCandidate("build", {
       uniqueKey: `build_house_total_${houseTarget}`,
       family: "housing",
-      title: houseTarget >= 8 ? "Town Blocks" : "Raise Another Roof",
+      title: "Raise Another Roof",
       description: `Reach ${houseTarget} houses in town.`,
       metric: "houses",
       target: houseTarget,
@@ -656,7 +659,7 @@ export class AchievementSystem {
         xp: 16 + (houseTarget * 3),
         money: 40 + (houseTarget * 14),
       },
-      repeatable: true,
+      repeatable: false,
       weight: 1.25,
     }));
 
@@ -676,39 +679,43 @@ export class AchievementSystem {
       weight: 1.05,
     }));
 
-    const storageTarget = nextMilestone(storages, [2, 3, 4, 5, 6], 1);
-    candidates.push(this._makeCandidate("build", {
-      uniqueKey: `build_storage_total_${storageTarget}`,
-      family: "storage",
-      title: "Stack More Crates",
-      description: `Reach ${storageTarget} storage buildings.`,
-      metric: "storages",
-      target: storageTarget,
-      reward: {
-        xp: 14 + (storageTarget * 4),
-        money: 28 + (storageTarget * 18),
-        wood: Math.min(6, storageTarget + 1),
-      },
-      repeatable: true,
-      weight: storages > 0 ? 0.92 : 0.55,
-    }));
+    if (storages >= 1) {
+      const storageTarget = MAX_STORAGE_GOAL_TARGET;
+      candidates.push(this._makeCandidate("build", {
+        uniqueKey: `build_storage_total_${storageTarget}`,
+        family: "storage",
+        title: "Add More Storage",
+        description: `Reach ${storageTarget} storage buildings.`,
+        metric: "storages",
+        target: storageTarget,
+        reward: {
+          xp: 14 + (storageTarget * 4),
+          money: 28 + (storageTarget * 18),
+          wood: Math.min(6, storageTarget + 1),
+        },
+        repeatable: false,
+        weight: 0.92,
+      }));
+    }
 
-    const ovenTarget = nextMilestone(ovens, [2, 3, 4, 5], 1);
-    candidates.push(this._makeCandidate("build", {
-      uniqueKey: `build_oven_total_${ovenTarget}`,
-      family: "ovens",
-      title: "Keep The Ovens Hot",
-      description: `Build up to ${ovenTarget} ovens.`,
-      metric: "ovens",
-      target: ovenTarget,
-      reward: {
-        xp: 14 + (ovenTarget * 4),
-        money: 22 + (ovenTarget * 14),
-        food: Math.min(8, ovenTarget * 2),
-      },
-      repeatable: true,
-      weight: ovens > 0 ? 0.82 : 0.45,
-    }));
+    if (ovens >= 1) {
+      const ovenTarget = MAX_OVEN_GOAL_TARGET;
+      candidates.push(this._makeCandidate("build", {
+        uniqueKey: `build_oven_total_${ovenTarget}`,
+        family: "ovens",
+        title: "Add A Second Oven",
+        description: `Reach ${ovenTarget} ovens.`,
+        metric: "ovens",
+        target: ovenTarget,
+        reward: {
+          xp: 14 + (ovenTarget * 4),
+          money: 22 + (ovenTarget * 14),
+          food: Math.min(8, ovenTarget * 2),
+        },
+        repeatable: false,
+        weight: 0.82,
+      }));
+    }
 
     const playerTarget = nextMilestone(players, [5, 6, 8, 10, 12, 14], 2);
     candidates.push(this._makeCandidate("build", {
@@ -945,7 +952,27 @@ export class AchievementSystem {
     const shockersDefeated = this.getMetricValue("shockersDefeated");
     const candidates = [];
 
-    const raiderDeltaTarget = nightsSurvived >= 6 ? 14 : nightsSurvived >= 3 ? 10 : 6;
+    const makeShockerCandidate = () => this._makeCandidate("combat", {
+      uniqueKey: "combat_shocker_total_1",
+      family: "boss",
+      title: "Ground The Shocker",
+      description: "Defeat The Shocker.",
+      metric: "shockersDefeated",
+      target: 1,
+      reward: {
+        xp: 90,
+        money: 250,
+        permits: 2,
+      },
+      repeatable: false,
+      weight: 99,
+    });
+
+    if (nightsSurvived >= MAX_NORMAL_NIGHTS_SURVIVED_TARGET || shockersDefeated > 0) {
+      return [makeShockerCandidate()];
+    }
+
+    const raiderDeltaTarget = nightsSurvived >= 3 ? 10 : 6;
     candidates.push(this._makeCandidate("combat", {
       uniqueKey: `combat_raiders_${raidersKilled}_${raiderDeltaTarget}`,
       family: "raiders",
@@ -982,11 +1009,11 @@ export class AchievementSystem {
       weight: 1.04,
     }));
 
-    const nightDeltaTarget = nightsSurvived >= 4 ? 2 : 1;
+    const nightDeltaTarget = 1;
     candidates.push(this._makeCandidate("combat", {
       uniqueKey: `combat_nights_${nightsSurvived}_${nightDeltaTarget}`,
       family: "survival",
-      title: nightDeltaTarget > 1 ? "Long Watch" : "Hold Another Night",
+      title: "Hold Another Night",
       description: `Survive ${nightDeltaTarget} more night${nightDeltaTarget === 1 ? "" : "s"} after this goal appears.`,
       metric: "nightsSurvived",
       mode: "delta",
@@ -1033,37 +1060,21 @@ export class AchievementSystem {
       weight: 0.8,
     }));
 
-    const nightTotalTarget = nextMilestone(nightsSurvived, [3, 5, 7, 10], 2);
-    candidates.push(this._makeCandidate("combat", {
-      uniqueKey: `combat_nights_total_${nightTotalTarget}`,
-      family: "survival",
-      title: "Seasoned Defenders",
-      description: `Reach ${nightTotalTarget} nights survived.`,
-      metric: "nightsSurvived",
-      target: nightTotalTarget,
-      reward: {
-        xp: 28 + (nightTotalTarget * 8),
-        money: 60 + (nightTotalTarget * 24),
-      },
-      repeatable: true,
-      weight: 0.78,
-    }));
-
-    if (nightsSurvived >= 5 || shockersDefeated > 0) {
+    const nightTotalTarget = nextMilestone(nightsSurvived, [3, 5], 2);
+    if (nightTotalTarget <= MAX_NORMAL_NIGHTS_SURVIVED_TARGET) {
       candidates.push(this._makeCandidate("combat", {
-        uniqueKey: "combat_shocker_total_1",
-        family: "boss",
-        title: "Ground The Shocker",
-        description: "Defeat The Shocker.",
-        metric: "shockersDefeated",
-        target: 1,
+        uniqueKey: `combat_nights_total_${nightTotalTarget}`,
+        family: "survival",
+        title: "Seasoned Defenders",
+        description: `Reach ${nightTotalTarget} nights survived.`,
+        metric: "nightsSurvived",
+        target: nightTotalTarget,
         reward: {
-          xp: 90,
-          money: 250,
-          permits: 2,
+          xp: 28 + (nightTotalTarget * 8),
+          money: 60 + (nightTotalTarget * 24),
         },
-        repeatable: false,
-        weight: 1.16,
+        repeatable: true,
+        weight: 0.78,
       }));
     }
 
@@ -1167,10 +1178,15 @@ export class AchievementSystem {
     return this.getProgress(goal).done;
   }
 
-  _isDeprecatedResourceStockpileGoal(goal) {
+  _isDeprecatedGoal(goal) {
     const family = String(goal?.family || "");
     const key = String(goal?.uniqueKey || "");
-    return (
+    const metric = String(goal?.metric || "");
+    const mode = goal?.mode === "delta" ? "delta" : "threshold";
+    const target = Math.max(0, asPositiveInt(goal?.target, 0));
+    const baseline = Math.max(0, asPositiveInt(goal?.baseline, 0));
+
+    if (
       family === "stockpile_wood" ||
       family === "stockpile_stone" ||
       family === "stockpile_seeds" ||
@@ -1179,7 +1195,32 @@ export class AchievementSystem {
       key.startsWith("econ_stock_stone_") ||
       key.startsWith("econ_stock_seeds_") ||
       key.startsWith("econ_stock_berries_")
-    );
+    ) {
+      return true;
+    }
+
+    if (metric === "houses") {
+      if (target > MAX_HOUSE_GOAL_TARGET) return true;
+      if (target === MAX_HOUSE_GOAL_TARGET && goal?.repeatable) return true;
+    }
+    if (metric === "storages") {
+      if (target > MAX_STORAGE_GOAL_TARGET) return true;
+      if (target === MAX_STORAGE_GOAL_TARGET && goal?.repeatable) return true;
+    }
+    if (metric === "ovens") {
+      if (target > MAX_OVEN_GOAL_TARGET) return true;
+      if (target === MAX_OVEN_GOAL_TARGET && goal?.repeatable) return true;
+    }
+
+    if (metric === "nightsSurvived") {
+      if (mode === "delta") {
+        if (target > 1) return true;
+        return baseline + target > MAX_NORMAL_NIGHTS_SURVIVED_TARGET;
+      }
+      return target > MAX_NORMAL_NIGHTS_SURVIVED_TARGET;
+    }
+
+    return false;
   }
 
   _completeGoal(goal) {
@@ -1208,7 +1249,7 @@ export class AchievementSystem {
   update(force = false) {
     if (Array.isArray(this.state.activeGoals)) {
       const before = this.state.activeGoals.length;
-      this.state.activeGoals = this.state.activeGoals.filter((goal) => !this._isDeprecatedResourceStockpileGoal(goal));
+      this.state.activeGoals = this.state.activeGoals.filter((goal) => !this._isDeprecatedGoal(goal));
       if (this.state.activeGoals.length !== before) force = true;
     }
 

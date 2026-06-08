@@ -47,14 +47,12 @@ const TARGETED_MARKET_ACTIVATIONS = new Set([
   "auto_wall",
   "chain_zapper",
   "meteor_drop",
-  "decoy_beacon",
   "fortify_patch",
   "shock_mine",
 ]);
 const INSTANT_TARGET_ACTIVATIONS = new Set([
   "chain_zapper",
   "meteor_drop",
-  "decoy_beacon",
   "fortify_patch",
   "shock_mine",
 ]);
@@ -726,6 +724,10 @@ function applyChainZapper(scene, startEnemy) {
   const chain = buildChain(startEnemy);
   if (!chain.length) return 0;
   ensureMarketAnimations(scene);
+  AudioManager.playShockerZap?.(null, {
+    volume: Phaser.Math.Clamp(0.2 + chain.length * 0.035, 0.22, 0.48),
+    rate: Phaser.Math.Clamp(1.08 - chain.length * 0.018, 0.88, 1.1),
+  });
   for (let i = 0; i < chain.length - 1; i++) {
     drawZapSegment(scene, chain[i], chain[i + 1]);
   }
@@ -748,6 +750,8 @@ function applyChainZapper(scene, startEnemy) {
 }
 
 function applyMeteorImpact(scene, target, radius = SQUARESIZE * 3.2) {
+  AudioManager.playMeteorImpact?.({ volume: 0.5 });
+  scene.cameras?.main?.shake?.(240, 0.008);
   playSmokeClearing(scene, target.x, target.y, {
     width: radius * 1.15,
     height: radius * 1.15,
@@ -792,6 +796,7 @@ function applyMeteorImpact(scene, target, radius = SQUARESIZE * 3.2) {
 function applyMeteor(scene, target) {
   const radius = SQUARESIZE * 3.2;
   ensureMarketAnimations(scene);
+  AudioManager.playMeteorFlyby?.({ volume: 0.42 });
   const key = textureOrFallback(scene, MARKET_REAL_ASSETS.world.meteorDrop, null);
   if (!key) return applyMeteorImpact(scene, target, radius);
 
@@ -809,7 +814,8 @@ function applyMeteor(scene, target) {
   const shadow = scene.add.ellipse(target.x, target.y, SQUARESIZE * 0.5, SQUARESIZE * 0.22, 0x000000, 0.26)
     .setDepth((UIDEPTH ?? 10) + 2)
     .setScale(0.35);
-  scene.tweens.add({ targets: shadow, scaleX: 1.8, scaleY: 1.2, alpha: 0.42, duration: 520, ease: "Quad.easeIn" });
+  const travelMs = 1420;
+  scene.tweens.add({ targets: shadow, scaleX: 1.8, scaleY: 1.2, alpha: 0.42, duration: travelMs - 80, ease: "Quad.easeIn" });
 
   let hits = 0;
   scene.tweens.add({
@@ -817,7 +823,7 @@ function applyMeteor(scene, target) {
     x: target.x,
     y: target.y,
     scale: 0.74,
-    duration: 560,
+    duration: travelMs,
     ease: "Quad.easeIn",
     onComplete: () => {
       meteor.destroy();
@@ -826,116 +832,6 @@ function applyMeteor(scene, target) {
     },
   });
   return hits;
-}
-
-function removeTeamBuildingRef(building) {
-  for (const team of Object.values(Teams.teamLists || {})) {
-    const list = team?.buildings;
-    if (!Array.isArray(list)) continue;
-    const index = list.findIndex((entry) => entry?.[3]?.buildingRef === building || entry?.buildingRef === building);
-    if (index !== -1) list.splice(index, 1);
-  }
-}
-
-function spawnDecoyBeacon(scene, gx, gy) {
-  const pos = centerOfCell(gx, gy);
-  const spriteKey = textureOrFallback(scene, MARKET_REAL_ASSETS.world.decoyBeacon, MARKET_PLACEHOLDER_ASSETS.ghosts.decoyBeacon);
-  const previousPlayerNav = GameMap.navGrid?.[gy]?.[gx];
-  const previousEnemyNav = GameMap.enemyNavGrid?.[gy]?.[gx];
-  const sprite = scene.add.image(pos.x, pos.y, spriteKey)
-    .setDisplaySize(SQUARESIZE, SQUARESIZE)
-    .setDepth((UIDEPTH ?? 10) + 2)
-    .setInteractive({ useHandCursor: true });
-  sprite.team = 1;
-  const collider = scene.physics.add.staticImage(pos.x, pos.y, "barrier")
-    .setDisplaySize(SQUARESIZE, SQUARESIZE)
-    .setAlpha(0);
-  collider.refreshBody();
-  GameMap.structureBarrier?.add(collider);
-  if (GameMap.navGrid?.[gy]) GameMap.navGrid[gy][gx] = 0;
-  if (GameMap.enemyNavGrid?.[gy]) GameMap.enemyNavGrid[gy][gx] = 0;
-  scene.navMeshUpdater?.blockTile?.(gx, gy);
-  scene.enemyNavMeshUpdater?.blockTile?.(gx, gy);
-  GameMap.regionSystem?.markDirty?.();
-  GameMap.regionDrawer?.markDirty?.();
-  GameMap.enemyRegionSystem?.markDirty?.();
-  GameMap.enemyRegionDrawer?.markDirty?.();
-
-  const decoy = {
-    x: gx,
-    y: gy,
-    gridX: gx,
-    gridY: gy,
-    teamNumber: 1,
-    team: 1,
-    tileType: { name: "decoy_beacon", lenX: 1, lenY: 1 },
-    maxHealth: 120,
-    health: 120,
-    sprite,
-    collider,
-    active: true,
-    onDamaged(damage, currentHealth, maxHealth) {
-      this.maxHealth = maxHealth ?? this.maxHealth;
-      this.health = Math.max(0, currentHealth ?? (this.health - damage));
-      sprite.setTint(0xff6666);
-      scene.time.delayedCall(100, () => sprite.active && sprite.clearTint());
-      if (this.health <= 0) this.destroy();
-    },
-    takeDamage(damage) {
-      this.onDamaged(damage, Math.max(0, this.health - damage), this.maxHealth);
-    },
-    destroy() {
-      if (!this.active) return;
-      this.active = false;
-      explodeDecoy(scene, pos.x, pos.y);
-      for (const enemy of getLiveEnemies()) {
-        if (enemy.forcedTarget === sprite) enemy.forcedTarget = null;
-      }
-      removeTeamBuildingRef(this);
-      GameMap.structureBarrier?.remove(collider, true, true);
-      if (GameMap.navGrid?.[gy]) GameMap.navGrid[gy][gx] = previousPlayerNav ?? 1;
-      if (GameMap.enemyNavGrid?.[gy]) GameMap.enemyNavGrid[gy][gx] = previousEnemyNav ?? 1;
-      scene.navMeshUpdater?.blockTiles?.([{ x: gx, y: gy }], true);
-      scene.enemyNavMeshUpdater?.blockTiles?.([{ x: gx, y: gy }], true);
-      GameMap.regionSystem?.markDirty?.();
-      GameMap.regionDrawer?.markDirty?.();
-      GameMap.enemyRegionSystem?.markDirty?.();
-      GameMap.enemyRegionDrawer?.markDirty?.();
-      collider.destroy?.();
-      sprite.destroy?.();
-    },
-  };
-  collider.buildingRef = decoy;
-  collider.team = 1;
-  sprite.buildingRef = decoy;
-  Teams.getTeam?.(PLAYER_TEAM)?.buildings?.push([gx, gy, decoy.tileType, { buildingRef: decoy }]);
-  for (const enemy of getLiveEnemies()) {
-    if (Phaser.Math.Distance.Between(pos.x, pos.y, enemy.x, enemy.y) > SQUARESIZE * 12) continue;
-    enemy.forcedTarget = sprite;
-    enemy.roam = false;
-  }
-  scene.time.delayedCall(60_000, () => decoy.active && decoy.destroy());
-  showGhostText(scene, pos.x, pos.y - 12, "DECOY", 1, false, false, "#ffe07a");
-  return decoy;
-}
-
-function explodeDecoy(scene, x, y) {
-  const radius = SQUARESIZE * 2.5;
-  const graphics = scene.add.graphics().setDepth((UIDEPTH ?? 10) + 120);
-  graphics.fillStyle(0xffe07a, 0.22);
-  graphics.fillCircle(x, y, radius);
-  graphics.lineStyle(3, 0xffe07a, 0.8);
-  graphics.strokeCircle(x, y, radius);
-  scene.tweens.add({
-    targets: graphics,
-    alpha: 0,
-    duration: 280,
-    onComplete: () => graphics.destroy(),
-  });
-  for (const enemy of getLiveEnemies()) {
-    if (Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y) > radius) continue;
-    damageTroop(scene, enemy, 110, { sourceTeam: 1, color: "#ffe07a" });
-  }
 }
 
 function spawnShockMine(scene, gx, gy) {
@@ -961,6 +857,7 @@ function spawnShockMine(scene, gx, gy) {
     if (!close) return;
     mine.active = false;
     mine.timer?.remove(false);
+    AudioManager.playShockerZap?.(null, { volume: 0.42, rate: 0.9 });
 
     const radius = SQUARESIZE * 2.15;
     const graphics = scene.add.graphics().setDepth((UIDEPTH ?? 10) + 120);
@@ -1183,7 +1080,7 @@ export class MarketCardUseController {
     if (this.activation === "chain_zapper") return !!this.selected?.enemy;
     if (this.activation === "meteor_drop") return Number.isFinite(this.selected?.x) && Number.isFinite(this.selected?.y);
     if (this.activation === "fortify_patch") return !!this.selected?.target;
-    if (this.activation === "decoy_beacon" || this.activation === "shock_mine") return !!this.selected?.valid;
+    if (this.activation === "shock_mine") return !!this.selected?.valid;
     return false;
   }
 
@@ -1207,9 +1104,6 @@ export class MarketCardUseController {
     } else if (this.activation === "fortify_patch") {
       const ok = applyFortify(this.scene, this.selected.target);
       result = { ok, message: ok ? "Target fortified" : "No valid fortify target" };
-    } else if (this.activation === "decoy_beacon") {
-      spawnDecoyBeacon(this.scene, this.selected.gx, this.selected.gy);
-      result = { ok: true, message: "Decoy Beacon placed" };
     } else if (this.activation === "shock_mine") {
       spawnShockMine(this.scene, this.selected.gx, this.selected.gy);
       result = { ok: true, message: "Shock Mine armed" };
@@ -1245,12 +1139,16 @@ export class MarketCardUseController {
     this._cursorGuard = () => this._enforceCursor();
     this.scene.input?.on?.("gameobjectover", this._cursorGuard);
     this.scene.input?.on?.("gameobjectout", this._cursorGuard);
+    this.scene.input?.on?.("gameobjectmove", this._cursorGuard);
+    this.scene.input?.on?.("pointermove", this._cursorGuard);
   }
 
   _detachCursorGuard() {
     if (!this._cursorGuard) return;
     this.scene.input?.off?.("gameobjectover", this._cursorGuard);
     this.scene.input?.off?.("gameobjectout", this._cursorGuard);
+    this.scene.input?.off?.("gameobjectmove", this._cursorGuard);
+    this.scene.input?.off?.("pointermove", this._cursorGuard);
     this._cursorGuard = null;
   }
 
@@ -1305,9 +1203,6 @@ export class MarketCardUseController {
     if (this.activation === "fortify_patch") {
       return this.hover?.target ? `FORTIFY PATCH | Hovering ${this.hover.target.label} | Click to fortify` : "FORTIFY PATCH | Hover a building or wall";
     }
-    if (this.activation === "decoy_beacon") {
-      return this.hover?.valid ? "DECOY BEACON | Click to place the beacon" : "DECOY BEACON | Hover a valid empty tile";
-    }
     if (this.activation === "shock_mine") {
       return this.hover?.valid ? "SHOCK MINE | Click to arm the mine" : "SHOCK MINE | Hover a valid empty tile";
     }
@@ -1338,7 +1233,7 @@ export class MarketCardUseController {
       return;
     }
 
-    if (this.activation === "decoy_beacon" || this.activation === "shock_mine") {
+    if (this.activation === "shock_mine") {
       const valid = isValidPlacementCell(grid.x, grid.y);
       this.hover = { gx: grid.x, gy: grid.y, valid };
     }
@@ -1398,10 +1293,10 @@ export class MarketCardUseController {
       return;
     }
 
-    if (this.activation === "decoy_beacon" || this.activation === "shock_mine") {
+    if (this.activation === "shock_mine") {
       const target = this.selected || this.hover;
       if (!target) return;
-      const color = target.valid ? (this.activation === "decoy_beacon" ? 0xffe07a : 0xb28cff) : 0xff5555;
+      const color = target.valid ? 0xb28cff : 0xff5555;
       const alpha = target.valid ? 0.28 : 0.18;
       g.fillStyle(color, alpha);
       g.fillRect(target.gx * SQUARESIZE + 3, target.gy * SQUARESIZE + 3, SQUARESIZE - 6, SQUARESIZE - 6);

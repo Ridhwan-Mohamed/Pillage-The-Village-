@@ -86,8 +86,8 @@ export const weapons = {
 
   turret: {
     name: "turret",
-    baseDmg: 42,
-    critDmg: 68,
+    baseDmg: 30,
+    critDmg: 50,
     critProb: 18,
     accuracy: 100,
     duration: 850,
@@ -105,8 +105,8 @@ export const weapons = {
 
   catapult: {
     name: "catapult",
-    baseDmg: 125,
-    critDmg: 180,
+    baseDmg: 86,
+    critDmg: 130,
     critProb: 24,
     accuracy: 100,
     duration: 2200,

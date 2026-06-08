@@ -739,8 +739,9 @@ export class ContractHud {
     this.popupSubtitle.setColor(subtitleColor);
   }
 
-  _setPopupSubtitle(text = "", color = null) {
+  _setPopupSubtitle(text = "", color = null, fontSize = "10px") {
     const next = String(text || "").trim();
+    this.popupSubtitle.setFontSize(fontSize);
     this.popupSubtitle.setText(next);
     this.popupSubtitle.setVisible(!!next);
     if (color) this.popupSubtitle.setColor(color);
@@ -887,9 +888,7 @@ export class ContractHud {
       }
 
       const def = CONTRACT_DEFS[active.type] || CONTRACT_DEFS.FOREST;
-      const remainingMs = active.type === "MILITIA"
-        ? Math.max(0, Number(active.expireAt || 0) - Date.now())
-        : Math.max(0, Number(active.expireAt || 0) - this._getWorldNowMs());
+      const remainingMs = Math.max(0, Number(active.expireAt || 0) - this._getWorldNowMs());
       const timerStyle = lifecycle === "starting"
         ? makeTimerBadge({
           text: "STARTING",
@@ -1618,13 +1617,13 @@ export class ContractHud {
           bodyColor: "#eef7ff",
           subtitleColor: "#d6f0ff",
         });
-        this.popupTitle.setText("ðŸ›¡ Militia Contract");
-        this._setPopupSubtitle(`Tier ${diff} | ${tier.summary}`, "#d6f0ff");
-        this.popupBody.setPosition(18, 64);
+        this.popupTitle.setText("Militia Contract");
+        this._setPopupSubtitle(`Tier ${diff}: ${tier.summary}`, "#d6f0ff", "12px");
+        this.popupBody.setPosition(18, 88);
         this.popupBody.setText([
-          `${formatPermitCostText(getContractPermitCost("MILITIA", diff, this.world ?? this.scene))} + $${moneyCost}`,
-          "Temporary defensive parcel that lasts 1 day.",
-          `Layout: ${tier.summary}`,
+          `Permits ${getContractPermitCost("MILITIA", diff, this.world ?? this.scene)} + $${moneyCost}`,
+          "Temporary defensive parcel.",
+          "Duration: 1 day",
         ].join("\n"));
 
         const selectedBtnFill = 0x163042;

@@ -97,7 +97,7 @@ export class TowerBuilding {
         .add
         .sprite(px, py, "tower")
         .setDepth(BLOCKDEPTH)
-        .setInteractive({ cursor: "pointer" })
+        .setInteractive({ useHandCursor: true })
     );
     const cx = x + Math.floor((lenX || 1) / 2);
     const cy = y + Math.floor((lenY || 1) / 2);
@@ -375,9 +375,9 @@ export class TowerBuilding {
     if (this.isTownTower) {
       const money = getTownTowerDawnIncome(this.scene, 1);
       const day = getBalanceDay(this.scene);
-      const permitText = this.isStarterTownTower && day === 1 ? "permit starts day 2" : "+1 permit";
+      const permitText = this.isStarterTownTower && day === 1 ? "" : " +1 permit";
       this.panelText1.setText(`Town Tower ${hp}`);
-      this.panelText2.setText(`Dawn: +$${money} ${permitText}`);
+      this.panelText2.setText(`Dawn: +$${money}${permitText}`);
       return;
     }
 

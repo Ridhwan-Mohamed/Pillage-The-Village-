@@ -23,7 +23,6 @@ import {
 const TAB_BASE_DEPTH = 51;
 const TAB_BG_DEPTH = 0;
 const TAB_CONTENT_DEPTH = 1;
-const TAB_ACTION_DEPTH = TAB_CONTENT_DEPTH + 3;
 
 
 export default class PlayerTab {
@@ -32,7 +31,7 @@ export default class PlayerTab {
     this.selected = null;
     this.pendingSellConfirmationId = null;
     this.pendingSellConfirmEvt = null;
-        this.rows = new Map(); // sprite.id -> { row, hpBar, stBar, nameText, bg }
+        this.rows = new Map(); // sprite -> { row, hpBar, stBar, nameText, bg }
         this.refreshEvt = null;
         this._onWheel = null;
         this._rowBaseY = new WeakMap();
@@ -252,6 +251,13 @@ export default class PlayerTab {
         };
 
         function makeActionButton(labelText, onClick, style, width) {
+            const background = makeGlassRoundRect(scene, width, BUTTON_H, 10, {
+                fill: style.fill,
+                alpha: 0.9,
+                stroke: style.stroke,
+                strokeAlpha: 0.2,
+                strokeWidth: 1.5,
+            });
             const text = scene.add.text(0, 0, labelText, {
                 fontFamily: 'Bungee',
                 fontSize: ACTION_FONT_SIZE,
@@ -259,79 +265,78 @@ export default class PlayerTab {
                 stroke: style.textStroke,
                 strokeThickness: 2,
                 align: 'center',
-            }).setDepth(TAB_ACTION_DEPTH + 1);
-            const background = makeGlassRoundRect(scene, width, BUTTON_H, 10, {
-                fill: style.fill,
-                alpha: 0.9,
-                stroke: style.stroke,
-                strokeAlpha: 0.2,
-                strokeWidth: 1.5,
-            }).setDepth(TAB_ACTION_DEPTH);
-            const label = scene.rexUI.add.label({
-                background,
-                text,
-                space: { left: 4, right: 4, top: compact ? 6 : 7, bottom: compact ? 6 : 7 }
-            }).setDepth(TAB_ACTION_DEPTH);
-            label.setMinSize(width, BUTTON_H);
-            label.__background = background;
-            label.__labelText = text;
-            label.__fixedWidth = width;
-            label.layout?.();
+                fixedWidth: width - 8,
+            }).setOrigin(0.5, 0.5);
+            const hit = scene.add.zone(0, 0, width, BUTTON_H).setOrigin(0.5, 0.5);
+            const button = scene.add.container(0, 0, [background, text, hit]);
+            button.setSize(width, BUTTON_H);
+            button.__background = background;
+            button.__labelText = text;
+            button.__hitZone = hit;
+            button.__fixedWidth = width;
 
-            label
+            hit
                 .setInteractive({ useHandCursor: true })
                 .on('pointerup', () => {
                     AudioManager.playBottomBarClick();
                     onClick?.();
                 })
                 .on('pointerover', () => {
-                    if (label.__hovered) return;
-                    label.__hovered = true;
-                    label.__baseY ??= label.y;
-                    setHoverLiftState(scene, label, true, { baseY: label.__baseY, hoverLift: 3, hoverScale: 1.03 });
+                    if (button.__hovered) return;
+                    button.__hovered = true;
+                    button.__baseY ??= button.y;
+                    setHoverLiftState(scene, button, true, { baseY: button.__baseY, hoverLift: 3, hoverScale: 1.03 });
                     if (!scene.guardPlacement?.active) {
                     scene.input.setDefaultCursor('pointer');
                     }
                 })
                 .on('pointerout', () => {
-                    if (!label.__hovered) return;
-                    label.__hovered = false;
-                    label.__baseY ??= label.y;
-                    setHoverLiftState(scene, label, false, { baseY: label.__baseY, hoverLift: 3, hoverScale: 1.03 });
+                    if (!button.__hovered) return;
+                    button.__hovered = false;
+                    button.__baseY ??= button.y;
+                    setHoverLiftState(scene, button, false, { baseY: button.__baseY, hoverLift: 3, hoverScale: 1.03 });
                     if (!scene.guardPlacement?.active) {
                     scene.input.setDefaultCursor('default');
                     }
                 });
 
-            return label;
+            return button;
         }
 
         function setActionButtonVisible(button, visible) {
+            if (!button) return false;
+            if (button.__actionVisible === visible) return false;
+            button.__actionVisible = visible;
             const background = button?.__background ?? button?.getElement?.('background');
             const text = button?.__labelText ?? button?.getElement?.('text');
+            const hit = button?.__hitZone;
             button?.setVisible?.(visible);
             background?.setVisible?.(visible);
             text?.setVisible?.(visible);
+            hit?.setVisible?.(visible);
             if (visible) {
-                button?.setInteractive?.({ useHandCursor: true });
+                hit?.setInteractive?.({ useHandCursor: true });
                 button?.setAlpha?.(1);
                 background?.setAlpha?.(1);
                 text?.setAlpha?.(1);
+                hit?.setAlpha?.(1);
             } else {
-                button?.disableInteractive?.();
+                hit?.disableInteractive?.();
                 if (button) button.__hovered = false;
                 scene.tweens?.killTweensOf?.(button);
                 button?.setScale?.(1);
                 if (button?.__baseY != null) button.y = button.__baseY;
             }
+            return true;
         }
 
         function setButtonLabel(button, labelText) {
             const text = button?.__labelText ?? button?.getElement?.('text');
-            if (!text || text.text === labelText) return;
+            if (!text || text.text === labelText) return false;
             text.setText(labelText);
             button.setMinSize?.(button.__fixedWidth ?? 0, BUTTON_H);
             button.layout?.();
+            return true;
         }
 
         // ---------- header row: portrait + details ----------
@@ -378,7 +383,7 @@ export default class PlayerTab {
         const buttonsRow = scene.rexUI.add.sizer({
             orientation: 'x',
             space: { item: ACTION_GAP }
-        }).setDepth(TAB_ACTION_DEPTH);
+        }).setDepth(TAB_CONTENT_DEPTH);
 
         // make the row as wide as the HP/ST bars so alignment is predictable
         buttonsRow.setMinSize(BAR_W, BUTTON_H + 8);
@@ -386,27 +391,34 @@ export default class PlayerTab {
         const sellBtn = makeActionButton('Sell', () => ui.sellSelected(), actionButtonStyles.sell, SIDE_BUTTON_W);
         const berryBtn = makeActionButton('Berry', () => ui.useBerryOnSelected(), actionButtonStyles.berry, SIDE_BUTTON_W);
         const sleepBtn = makeActionButton('Sleep', () => ui.toggleSelectedSleep(), actionButtonStyles.sleep, SLEEP_BUTTON_W);
-        // layout helper: rebuild row so things always pack from the left
-        function updateButtonsLayout({ isFriendly }) {
-            // remove all children from the row, but keep them alive
-            buttonsRow.clear(false);
+        buttonsRow.add(sellBtn,  0, 'top', 0, false);
+        buttonsRow.add(berryBtn, 0, 'top', 0, false);
+        buttonsRow.add(sleepBtn, 0, 'top', 0, false);
 
-            // hard reset visibility so dropped buttons don't float on screen
-            setActionButtonVisible(sellBtn, false);
-            setActionButtonVisible(berryBtn, false);
-            setActionButtonVisible(sleepBtn, false);
-            if (isFriendly) {
-                setActionButtonVisible(sellBtn, true);
-                buttonsRow.add(sellBtn,  0, 'top', 0, false);
+        let panel = null;
+        function bringActionsToTop() {
+            sellBtn?.bringToTop?.();
+            berryBtn?.bringToTop?.();
+            sleepBtn?.bringToTop?.();
+            buttonsRow?.bringToTop?.();
+        }
 
-                setActionButtonVisible(berryBtn, true);
-                buttonsRow.add(berryBtn, 0, 'top', 0, false);
-
-                setActionButtonVisible(sleepBtn, true);
-                buttonsRow.add(sleepBtn, 0, 'top', 0, false);
-            }
-
+        function layoutActions() {
             buttonsRow.layout();
+            panel?.layout?.();
+            ui.detailScroll?.layout?.();
+            bringActionsToTop();
+        }
+
+        // Keep Rex children mounted; only toggle their display/interaction state.
+        function updateButtonsLayout({ isFriendly }) {
+            const visible = !!isFriendly;
+            const changed = [
+                setActionButtonVisible(sellBtn, visible),
+                setActionButtonVisible(berryBtn, visible),
+                setActionButtonVisible(sleepBtn, visible),
+            ].some(Boolean);
+            if (changed) layoutActions();
         }
 
         // start with nothing shown (no unit selected yet)
@@ -419,7 +431,7 @@ export default class PlayerTab {
             stroke: 0xa6e9ff,
             strokeAlpha: 0.16,
         }).setDepth(TAB_BG_DEPTH);
-        const panel = scene.rexUI.add.sizer({
+        panel = scene.rexUI.add.sizer({
             orientation: 'y',
             space: { left: compact ? 7 : 8, right: compact ? 7 : 8, top: compact ? 5 : 6, bottom: compact ? 5 : 6, item: compact ? 6 : 8 }
         });
@@ -429,6 +441,7 @@ export default class PlayerTab {
         panel.add(header,     0, 'left', 0, true);
         panel.add(barsCol,    0, 'left', 0, true);
         panel.add(buttonsRow, 0, 'left', 0, true);
+        bringActionsToTop();
 
         // ---------- return with setters ----------
         return {
@@ -452,14 +465,15 @@ export default class PlayerTab {
                 applyPortraitKeyToSprite(scene, portrait, u.portraitKey, compact ? 42 : 44);
             },
             setActionLabels({ sell = 'Sell', berry = 'Berry', sleep = 'Sleep' } = {}) {
-                setButtonLabel(sellBtn, sell);
-                setButtonLabel(berryBtn, berry);
-                setButtonLabel(sleepBtn, sleep);
-                buttonsRow.layout();
+                const changed = [
+                    setButtonLabel(sellBtn, sell),
+                    setButtonLabel(berryBtn, berry),
+                    setButtonLabel(sleepBtn, sleep),
+                ].some(Boolean);
+                if (changed) layoutActions();
             },
             setSellConfirming(isConfirming) {
-                setButtonLabel(sellBtn, isConfirming ? 'Confirm' : 'Sell');
-                buttonsRow.layout();
+                if (setButtonLabel(sellBtn, isConfirming ? 'Confirm' : 'Sell')) layoutActions();
             },
             setButtonsLayout(layout = {}) { updateButtonsLayout(layout); },
             sellButton: sellBtn,
@@ -607,7 +621,7 @@ export default class PlayerTab {
         team1.forEach(sprite => {
             const row = this.createRow(sprite);
             this.listBody.add(row, { expand: true });
-            this.rows.set(sprite.id, row.userData);
+            this.rows.set(sprite, row.userData);
         });
 
         this.listBody.layout();
@@ -939,13 +953,13 @@ export default class PlayerTab {
     onPlayerDestroyed(player) {
         if (!player) return;
 
-        const data = this.rows.get(player.id);
+        const data = this.rows.get(player);
         if (data) {
             // destroy the row UI
             if (data.row && !data.row.isDestroyed) {
                 data.row.destroy();
             }
-            this.rows.delete(player.id);
+            this.rows.delete(player);
         }
 
         // if that player was selected, clear the detail panel
@@ -984,17 +998,15 @@ export default class PlayerTab {
         );
         data.bg.setStrokeStyle(selected ? 2.5 : hovered ? 2 : 1.5, accent, selected ? 0.34 : hovered ? 0.22 : 0.12);
         data.nameText?.setColor(selected ? "#fff8eb" : BOTTOM_BAR_THEME.text);
-        this.scene.tweens?.killTweensOf?.(data.row);
-        if (data.row.scaleX !== 1 || data.row.scaleY !== 1) {
-            data.row.setScale(1);
-        }
-        data.bg.__baseY ??= data.bg.y;
-        if (data.__hoverVisualState !== hovered) {
-            data.__hoverVisualState = hovered;
-            setHoverLiftState(this.scene, data.bg, hovered, {
-                baseY: data.bg.__baseY,
+        const active = selected || hovered;
+        const targetScale = selected ? 1.012 : hovered ? 1.008 : 1;
+        const nextVisualState = `${active}:${targetScale}`;
+        if (data.__hoverVisualState !== nextVisualState) {
+            data.__hoverVisualState = nextVisualState;
+            setHoverLiftState(this.scene, data.row, active, {
+                baseY: this._rowBaseY.get(data.row) ?? data.row.y,
                 hoverLift: 0,
-                hoverScale: 1.008,
+                hoverScale: targetScale,
                 moveY: false,
             });
         }

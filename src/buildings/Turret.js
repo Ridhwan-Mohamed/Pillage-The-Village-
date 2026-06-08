@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BLOCKDEPTH, SQUARESIZE, TILE_TYPES, colorFor, handleGridXY, showGhostText } from "../constants";
+import { BLOCKDEPTH, SQUARESIZE, TILE_TYPES, colorFor, handleGridXY, showGhostText, PARCEL } from "../constants";
 import { Map } from "../map";
 import { Player } from "../players/Player";
 import { Teams } from "../Teams";
@@ -9,7 +9,7 @@ import { AudioManager } from "../Manager/AudioManager";
 import { buildingManager } from "../Manager/buildingManager";
 import { PathRegistry } from "../lib/navmesh/PathRegistry";
 import { PathRepair } from "../lib/navmesh/PathRepair";
-import { destroyStructuralHealthBar, ensureStructuralHealthBar, getStructuralBarAnchor, getStructuralHealthBarTargets, layoutStructuralHealthBar } from "../UI/BuildingTheme";
+import { destroyStructuralHealthBar, ensureStructuralHealthBar, getStructuralBarAnchor, layoutStructuralHealthBar } from "../UI/BuildingTheme";
 import { playBuildingCollapseSmoke } from "../FX/SmokeClearing";
 
 export class Turret {
@@ -33,6 +33,12 @@ export class Turret {
     this.weapon = opts.weapon ?? weapons.turret;
     this.maxHealth = opts.maxHealth ?? this.tileType.maxHealth ?? 320;
     this.health = opts.health ?? this.maxHealth;
+    this.isTemporaryMilitia = !!opts.isTemporaryMilitia;
+    this.maxAmmo = Number.isFinite(Number(opts.maxAmmo)) ? Math.max(0, Math.floor(Number(opts.maxAmmo))) : null;
+    this.ammoRemaining = Number.isFinite(Number(opts.ammoRemaining ?? opts.ammo))
+      ? Math.max(0, Math.floor(Number(opts.ammoRemaining ?? opts.ammo)))
+      : this.maxAmmo;
+    this._targetShotCounts = new WeakMap();
     this.nextShotAt = 0;
     this.currentTarget = null;
     this.isHovered = false;
@@ -41,6 +47,8 @@ export class Turret {
     this._damageBarTimer = null;
     this.healthBarBg = null;
     this.healthBar = null;
+    this.ammoBg = null;
+    this.ammoText = null;
 
     const centerX = x * SQUARESIZE + (this.tileType.lenX * SQUARESIZE) / 2;
     const centerY = y * SQUARESIZE + (this.tileType.lenY * SQUARESIZE) / 2;
@@ -249,6 +257,7 @@ export class Turret {
 
   fireAt(target, angle, now) {
     if (!target?.active) return;
+    if (this._hasFiniteAmmo() && this.ammoRemaining <= 0) return;
 
     AudioManager.playWeaponAttack(this.topSprite, this.weapon, {
       volume: 0.45,
@@ -267,6 +276,34 @@ export class Turret {
     );
 
     this.nextShotAt = now + this.weapon.duration;
+    this._recordShot(target);
+    this._consumeAmmo();
+  }
+
+  _hasFiniteAmmo() {
+    return Number.isFinite(Number(this.maxAmmo)) && Number.isFinite(Number(this.ammoRemaining));
+  }
+
+  _getShotCount(target) {
+    if (!target || !this._targetShotCounts) return 0;
+    return Math.max(0, Number(this._targetShotCounts.get(target) || 0));
+  }
+
+  _recordShot(target) {
+    if (!target) return;
+    this._targetShotCounts?.set(target, this._getShotCount(target) + 1);
+  }
+
+  _consumeAmmo() {
+    if (!this._hasFiniteAmmo()) return;
+    this.ammoRemaining = Math.max(0, Math.floor(Number(this.ammoRemaining || 0)) - 1);
+    this.updateHealthBar();
+    if (this.ammoRemaining > 0) return;
+
+    showGhostText(this.scene, this.topSprite.x, this.topSprite.y - 28, "OUT", this.teamNumber, false, false, "#f8e7b0");
+    this.scene.time.delayedCall(180, () => {
+      if (!this._destroyed) this.destroyAndUnblock({ playCollapseSfx: false });
+    });
   }
 
   takeDamage(damage) {
@@ -286,7 +323,6 @@ export class Turret {
   onDamaged(damage, currentHealth, maxHealth) {
     this.health = Math.max(0, currentHealth ?? this.health);
     this.maxHealth = maxHealth ?? this.maxHealth ?? 1;
-    buildingManager.queueAutoFixForBuilding(this, this.teamNumber);
 
     const scene = this.scene;
     const baseAngle = Number.isFinite(this._damageRestAngle) ? this._damageRestAngle : (this.baseSprite?.angle || 0);
@@ -326,6 +362,7 @@ export class Turret {
 
   updateHealthBar() {
     if (this._destroyed || !this.baseSprite?.active) return;
+    this.updateAmmoUi();
 
     const now = this.scene?.time?.now ?? 0;
     const shouldShow = this.isHovered || now < this._damageBarUntil;
@@ -351,6 +388,55 @@ export class Turret {
     });
   }
 
+  updateAmmoUi() {
+    if (this._destroyed || !this.baseSprite?.active || !this._hasFiniteAmmo()) {
+      this._destroyAmmoUi();
+      return;
+    }
+
+    if (!this.isHovered) {
+      this.ammoBg?.setVisible(false);
+      this.ammoText?.setVisible(false);
+      return;
+    }
+
+    if (!this.ammoBg) {
+      this.ammoBg = this.scene.add
+        .rectangle(0, 0, 74, 24, 0x121b24, 0.92)
+        .setOrigin(0.5)
+        .setDepth(BLOCKDEPTH + 5)
+        .setStrokeStyle(2, 0xf8e7b0, 0.32);
+      Map.addToWorldStatic(this.ammoBg);
+    }
+    if (!this.ammoText) {
+      this.ammoText = this.scene.add.text(0, 0, "", {
+        fontFamily: "Bungee",
+        fontSize: "11px",
+        color: "#fff4c2",
+        stroke: "#06111a",
+        strokeThickness: 3,
+      }).setOrigin(0.5);
+      this.ammoText.setDepth(BLOCKDEPTH + 6);
+      Map.addToWorldStatic(this.ammoText);
+    }
+
+    const bounds = this.baseSprite.getBounds?.();
+    const centerX = bounds?.centerX ?? this.baseSprite.x;
+    const y = (bounds?.top ?? this.baseSprite.y) - 18;
+    this.ammoText.setText(`${Math.max(0, Math.floor(Number(this.ammoRemaining || 0)))}/${Math.max(0, Math.floor(Number(this.maxAmmo || 0)))}`);
+    this.ammoBg.setPosition(centerX, y);
+    this.ammoText.setPosition(centerX, y);
+    this.ammoBg.setVisible(true);
+    this.ammoText.setVisible(true);
+  }
+
+  _destroyAmmoUi() {
+    this.ammoBg?.destroy?.();
+    this.ammoText?.destroy?.();
+    this.ammoBg = null;
+    this.ammoText = null;
+  }
+
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
@@ -367,6 +453,7 @@ export class Turret {
     }
 
     destroyStructuralHealthBar(this);
+    this._destroyAmmoUi();
 
     playBuildingCollapseSmoke(this);
     Map.removeFromWorldStatic?.(this.topSprite, true);
@@ -429,10 +516,9 @@ export class Turret {
 
   _pickTarget() {
     const maxRangeSq = (this.weapon.range ?? 0) * (this.weapon.range ?? 0);
-    let nearestVisible = null;
-    let nearestVisibleDistSq = Infinity;
-    let nearestAny = null;
-    let nearestAnyDistSq = Infinity;
+    let best = null;
+    let bestShotCount = Infinity;
+    let bestDistSq = Infinity;
 
     for (const troop of Player.troops) {
       if (!troop?.active || !troop.body) continue;
@@ -443,20 +529,33 @@ export class Turret {
       const dx = troop.x - this.topSprite.x;
       const dy = troop.y - this.topSprite.y;
       const distSq = dx * dx + dy * dy;
-      if (distSq > maxRangeSq) continue;
+      if (!this._isEligibleByIslandOrRange(troop, distSq, maxRangeSq)) continue;
+      if (!Projectile.hasLineOfSight(this.topSprite, troop)) continue;
 
-      if (distSq < nearestAnyDistSq) {
-        nearestAny = troop;
-        nearestAnyDistSq = distSq;
-      }
-
-      if (Projectile.hasLineOfSight(this.topSprite, troop) && distSq < nearestVisibleDistSq) {
-        nearestVisible = troop;
-        nearestVisibleDistSq = distSq;
-      }
+      const shotCount = this._getShotCount(troop);
+      if (shotCount > bestShotCount) continue;
+      if (shotCount === bestShotCount && distSq >= bestDistSq) continue;
+      best = troop;
+      bestShotCount = shotCount;
+      bestDistSq = distSq;
     }
 
-    return nearestVisible ?? nearestAny;
+    return best;
+  }
+
+  _isEligibleByIslandOrRange(troop, distSq, maxRangeSq) {
+    if (!Player._isOnWater?.(troop) && this._isTargetOnMainIsland(troop)) return true;
+    return distSq <= maxRangeSq;
+  }
+
+  _isTargetOnMainIsland(troop) {
+    const origin = this.scene?.parcelManager?.mainIslandOrigin ?? PARCEL.MAIN_ORIGIN;
+    const minX = Number(origin?.x ?? PARCEL.MAIN_ORIGIN.x);
+    const minY = Number(origin?.y ?? PARCEL.MAIN_ORIGIN.y);
+    const size = Math.max(1, Number(PARCEL.SIZE || 0) || 1);
+    const gx = Math.floor(Number(troop?.x || 0) / SQUARESIZE);
+    const gy = Math.floor(Number(troop?.y || 0) / SQUARESIZE);
+    return gx >= minX && gx < minX + size && gy >= minY && gy < minY + size;
   }
 
   _getLeadAngle(target) {

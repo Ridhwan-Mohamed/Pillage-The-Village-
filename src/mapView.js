@@ -127,6 +127,13 @@ const RUN_TROOP_UNLOCK_KEYS = new Set([
     STORE_UNLOCK_KEYS.blademaster,
     STORE_UNLOCK_KEYS.gunslinger,
 ]);
+const DEMO_COMPLETION_STORE_UNLOCK_LABELS = Object.freeze({
+    [STORE_UNLOCK_KEYS.blademaster]: "Blademaster",
+    [STORE_UNLOCK_KEYS.gunslinger]: "Gunslinger",
+    [STORE_UNLOCK_KEYS.stoneWall]: "Stone Walls",
+    [STORE_UNLOCK_KEYS.militiaParcel]: "Militia Parcels",
+});
+const DEMO_COMPLETION_STORE_UNLOCK_KEYS = Object.freeze(Object.keys(DEMO_COMPLETION_STORE_UNLOCK_LABELS));
 const TOWN_XP_TEAM_ID = "1";
 const TOWN_XP_COLORS = Object.freeze({
     mint: 0x93f5d7,
@@ -313,11 +320,23 @@ export class mapView extends Phaser.Scene {
             lastGainAmount: 0,
             lastGainLabel: "",
             rewardReadyAt: 0,
+            pendingMilitiaUnlockReward: false,
+            militiaUnlockRewardShown: false,
         };
     }
 
     _isTutorialActive() {
         return !!this.tutorialManager?.isActive?.();
+    }
+
+    _isTownXpRewardPresentationBlocked() {
+        return !!(
+            this._continueCameraLockActive ||
+            this._startupCameraLocked ||
+            this._menuModeActive ||
+            this.isMainMenuPreview ||
+            this._pendingMenuPhase
+        );
     }
 
     getTownXpSnapshot() {
@@ -406,21 +425,55 @@ export class mapView extends Phaser.Scene {
         };
     }
 
-    _maybeUnlockMilitiaParcelFromTownXp(previousLevel, newLevel) {
+    _queueMilitiaUnlockRewardFromTownXp(previousLevel, newLevel) {
         const prev = Math.max(1, Number(previousLevel || 1));
         const next = Math.max(prev, Number(newLevel || prev));
+        const state = this._townXp || (this._townXp = this._createTownXpState());
 
         if (prev >= 3 || next < 3) return false;
-        if (hasStoreUnlock(STORE_UNLOCK_KEYS.militiaParcel)) return false;
+        if (state.militiaUnlockRewardShown) return false;
+
+        state.pendingMilitiaUnlockReward = true;
+        return true;
+    }
+
+    _tryPresentPendingMilitiaUnlockReward() {
+        const state = this._townXp || (this._townXp = this._createTownXpState());
+        if (!state.pendingMilitiaUnlockReward || state.militiaUnlockRewardShown) return false;
+        if (this._isTutorialActive()) return false;
+        if (this._isTownXpRewardPresentationBlocked()) return false;
+        if (this._townTowerLossInProgress || this._restartToMainMenuInProgress) return false;
+        if (this._activeRewardUI || this._activeBossRewardUI || this._activeTownXpRewardUI) return false;
+        if (this._hordeRewardInProgress || this.stageCompleteLock) return false;
+        if (this.menu?.active || this.draftMenu?.active) return false;
+        if (this.clock?.paused) return false;
+
+        const phaseKey = this.clock?.getPhaseKey?.() || this._currentPhaseKey;
+        if (phaseKey === "night") return false;
+        if (Number(this.time?.now || 0) < Math.max(0, Number(state.rewardReadyAt || 0))) return false;
 
         const reward = this._buildMilitiaUnlockReward();
+        this.clock.paused = true;
+        this.applySimulationSpeed(true);
+        this._movementLocked = true;
 
         this._activeBossRewardUI?.destroy?.();
         this._activeBossRewardUI = openBossUnlockRewardPresentation(this, {
             reward,
             onComplete: () => {
                 this._activeBossRewardUI = null;
+                state.pendingMilitiaUnlockReward = false;
+                state.militiaUnlockRewardShown = true;
+                state.rewardReadyAt = Number(this.time?.now || 0) + 140;
+                this._movementLocked = false;
+                if (!this._townTowerLossInProgress && !this._restartToMainMenuInProgress) {
+                    this.clock.paused = false;
+                    this.applySimulationSpeed(true);
+                }
                 this.parcelSpawnUI?.resetUiState?.();
+                this.parcelSpawnUI?.refreshMilitiaLockState?.();
+                this._queueTownXpChanged({ immediate: true });
+                SaveManager.queueAutosave("town_xp_militia_unlock");
                 this.time?.delayedCall?.(180, () => this._tryPresentPendingTownXpReward());
             },
         });
@@ -468,6 +521,7 @@ export class mapView extends Phaser.Scene {
         this.farmBannerParts = null;       // { left, esc, middle, seedCount, seedIcon, right }
         this.farmInstructionText = null;   // top-center instruction banner
         this.farmInstructionUI = null;
+        this.farmInstructionBg = null;
         this.farmInstrLeft = null;
         this.farmInstrMid = null;
         this.farmInstrSeedCount = null;
@@ -1460,6 +1514,8 @@ export class mapView extends Phaser.Scene {
                     );
                 }
             }
+
+            return result;
         };
 
         if ((bundle.wood || 0) > 0) {
@@ -1475,7 +1531,8 @@ export class mapView extends Phaser.Scene {
         }
 
         if ((bundle.cleanWater || 0) > 0) {
-            grantStorageItem("clean_water", bundle.cleanWater, "water");
+            const result = grantStorageItem("clean_water", bundle.cleanWater, "water");
+            this._applyStoredTownXpWaterToActiveBatch(result?.stored ?? 0);
         }
 
         if ((bundle.seeds || 0) > 0) {
@@ -1506,6 +1563,17 @@ export class mapView extends Phaser.Scene {
             overflowNotices,
             totalCompensated,
         };
+    }
+
+    _applyStoredTownXpWaterToActiveBatch(storedCount = 0) {
+        const stored = Math.max(0, Math.floor(Number(storedCount || 0)));
+        if (!(stored > 0)) return 0;
+
+        const automation = Teams.ensureTownAutomation?.(TOWN_XP_TEAM_ID);
+        const orderId = automation?.waterOrderId ?? null;
+        if (!orderId) return 0;
+
+        return OrderRunner.satisfyManagedWaterOrder?.(orderId, stored, TOWN_XP_TEAM_ID) ?? 0;
     }
 
     _getAvailableTownXpRecruitDefs() {
@@ -2131,7 +2199,7 @@ export class mapView extends Phaser.Scene {
         const tutorialActive = this._isTutorialActive();
         if (levelsGained > 0) {
             if (!tutorialActive) {
-                this._maybeUnlockMilitiaParcelFromTownXp(previousLevel, newLevel);
+                this._queueMilitiaUnlockRewardFromTownXp(previousLevel, newLevel);
             }
         }
 
@@ -2153,20 +2221,6 @@ export class mapView extends Phaser.Scene {
             showAlert(this, `${reason}: +${normalized} XP`, "#8fe7ff", 1100);
         }
 
-        const militiaJustUnlocked =
-            state.level >= 3
-            && !this._isMilitiaParcelUnlocked();
-
-        if (militiaJustUnlocked && !tutorialActive) {
-            unlockStoreItem(STORE_UNLOCK_KEYS.militiaParcel, this);
-            state.rewardReadyAt = Math.max(Number(this.time?.now || 0) + 380, Number(state.rewardReadyAt || 0));
-
-            this.time?.delayedCall?.(420, () => {
-                if (this._townTowerLossInProgress || this._restartToMainMenuInProgress) return;
-                this._showMilitiaParcelUnlockPresentation();
-            });
-        }
-
         this._queueTownXpChanged();
         SaveManager.queueAutosave("town_xp");
         return levelsGained;
@@ -2175,7 +2229,9 @@ export class mapView extends Phaser.Scene {
     _canPresentPendingTownXpReward() {
         const state = this._townXp || (this._townXp = this._createTownXpState());
         if (!(state.pendingLevelRewards > 0)) return false;
+        if (state.pendingMilitiaUnlockReward && !state.militiaUnlockRewardShown) return false;
         if (this._isTutorialActive()) return false;
+        if (this._isTownXpRewardPresentationBlocked()) return false;
         if (this._townTowerLossInProgress || this._restartToMainMenuInProgress) return false;
         if (this._activeRewardUI || this._activeBossRewardUI || this._activeTownXpRewardUI) return false;
         if (this._hordeRewardInProgress || this.stageCompleteLock) return false;
@@ -2183,16 +2239,20 @@ export class mapView extends Phaser.Scene {
         if (this.menu?.active || this.draftMenu?.active) return false;
         if (this.clock?.paused) return false;
 
-        const phaseKey = this._currentPhaseKey || this.clock?.getPhaseKey?.();
+        const phaseKey = this.clock?.getPhaseKey?.() || this._currentPhaseKey;
         if (phaseKey === "night") return false;
         if (Number(this.time?.now || 0) < Math.max(0, Number(state.rewardReadyAt || 0))) return false;
         return true;
     }
 
     _tryPresentPendingTownXpReward() {
+        const state = this._townXp || (this._townXp = this._createTownXpState());
+        if (state.pendingMilitiaUnlockReward && !state.militiaUnlockRewardShown) {
+            return this._tryPresentPendingMilitiaUnlockReward();
+        }
+
         if (!this._canPresentPendingTownXpReward()) return false;
 
-        const state = this._townXp || (this._townXp = this._createTownXpState());
         const snapshot = this.getTownXpSnapshot();
         const options = this._buildTownXpRewardOptions(snapshot.level);
 
@@ -2240,8 +2300,8 @@ export class mapView extends Phaser.Scene {
 
         const state = this._townXp || (this._townXp = this._createTownXpState());
         const level = Math.max(1, Number(state.level || 1));
-        if (level >= 3 && !this._isMilitiaParcelUnlocked()) {
-            return this._maybeUnlockMilitiaParcelFromTownXp(2, level);
+        if (level >= 3 && !state.militiaUnlockRewardShown) {
+            this._queueMilitiaUnlockRewardFromTownXp(2, level);
         }
 
         state.rewardReadyAt = Math.min(
@@ -2260,7 +2320,7 @@ export class mapView extends Phaser.Scene {
         const townXp = this.getTownXpSnapshot();
 
         return {
-            badgeLabel: "ENDLESS RUN RECAP",
+            badgeLabel: "RUN RECAP",
             title: "Town Tumbled!",
             subtitle: "The last Town Tower finally gave way, but the crew still put together a pretty cheerful little legend.",
             primaryStats: [
@@ -2607,59 +2667,75 @@ export class mapView extends Phaser.Scene {
         });
     }
 
+    _grantDemoCompletionStoreUnlocks() {
+        const unlockedLabels = [];
+        for (const key of DEMO_COMPLETION_STORE_UNLOCK_KEYS) {
+            const changed = unlockStoreItem(key, null);
+            if (changed) {
+                unlockedLabels.push(DEMO_COMPLETION_STORE_UNLOCK_LABELS[key] || key);
+            }
+        }
+        return unlockedLabels;
+    }
+
+    _buildDemoCompletionSummary() {
+        const summary = this._getRunSummaryData();
+        const unlockLabels = Object.values(DEMO_COMPLETION_STORE_UNLOCK_LABELS);
+
+        return {
+            ...summary,
+            badgeLabel: "DEMO COMPLETE",
+            title: "The Shocker Has Fallen",
+            subtitle: "Thanks for playing the demo. Your town broke the storm, and the remaining demo store roster is now permanently unlocked.",
+            troopUnlockLabels: unlockLabels,
+            unlockHeaderLabel: "Permanent Store Unlocks",
+            emptyUnlockHeaderLabel: "Permanent Store Unlocks: Already Claimed",
+            secondaryStats: [
+                ...(summary.secondaryStats || []),
+                { label: "Demo Result", value: "Complete" },
+            ],
+            restartLabel: "Main Menu",
+            restartHint: "Return to the clouds",
+        };
+    }
+
     handleShockerBossDefeated(troop) {
         if (!troop) return;
         const defeatedDay = Math.max(1, Number(troop._bossSpawnDay || this.clock?.day || SHOCKER_BOSS_DAY));
         if (Number(this._shockerBossState?.defeatedOnDay || 0) === defeatedDay && !this._shockerBossState?.nightLocked) return;
+
+        this._shockerBossState = this._shockerBossState || {};
         this._shockerBossState.defeated = true;
         this._shockerBossState.nightLocked = false;
         this._shockerBossState.defeatedOnDay = defeatedDay;
         this._activeShockerBoss = null;
+        this._movementLocked = true;
+        this.stageCompleteLock = true;
+        StageState.endlessMode = false;
         this._syncShockerBossUi();
 
-        const reward = {
-            id: "shocker_boss_reward",
-            title: "Storm Broken",
-            description: "The Shocker has been destroyed. The run continues in endless mode.",
-            displayLabel: "Boss Reward",
-            imageKey: getPlayerPortraitKey(troop),
-            accentColor: 0x8fdcff,
-            glowColor: 0xdff6ff,
-            panelColor: 0x101b30,
-            onGrant: (scene) => {
-                scene.updateMoney(SHOCKER_BOSS_REWARD_MONEY);
-                scene.updatePermits(SHOCKER_BOSS_REWARD_PERMITS);
-                scene.achievementSystem?.addStat?.("shockersDefeated", 1);
-                scene.addTownXp(TOWN_XP_SOURCE_VALUES.hordeSurvived + 35, "Shocker Defeated", { alert: true });
-                showAlert(scene, `Boss Reward: +$${SHOCKER_BOSS_REWARD_MONEY} and +${SHOCKER_BOSS_REWARD_PERMITS} permits`, "#8fe7ff", 2600);
-            },
-        };
+        this.achievementSystem?.addStat?.("shockersDefeated", 1);
+        this._grantDemoCompletionStoreUnlocks();
+        SaveManager.clearRunSave();
+        this._clearActiveRunPresentations();
 
-        const finalize = () => {
-            this._syncShockerBossUi();
-            StageState.endlessMode = true;
-            StageState.advanceHorde({ reason: "shocker_boss_defeated", hordeIndex: this.getCurrentHordeIndex() });
-            this._runStats.nightsSurvived += 1;
-            this.clock.day = Math.max(1, Number(this.clock?.day || SHOCKER_BOSS_DAY)) + 1;
-            this.clock.hours = 6;
-            this.clock.minutes = 0;
-            this.clock.wasNight = false;
-            this.clock.spawnedThisNight = 0;
-            AudioManager.setIsNight(false);
-            this.handlePhaseChanged("dawn", this.clock.getPhaseInfo?.());
-            this.handleDayStart();
-            this.events.emit("stage:changed");
-            SaveManager.queueAutosave("shocker_boss_defeated");
-        };
+        AudioManager.stopBossRainAmbience?.();
+        AudioManager.playBossThunder?.({ volume: 0.46, cooldownMs: 0 });
+        this.uiScene?.flashStormLightning?.(260, 0.46);
+        this.cameras?.main?.shake?.(260, 0.006);
+        if (this.clock) this.clock.paused = true;
+        this.applySimulationSpeed(true);
 
-        this._activeBossRewardUI?.destroy?.();
-        this._activeBossRewardUI = openBossUnlockRewardPresentation(this, {
-            reward,
-            onComplete: () => {
-                this._activeBossRewardUI = null;
-                finalize();
-            }
-        });
+        const showDemoCompletion = () => {
+            this._showGameOverOverlay(this._buildDemoCompletionSummary());
+        };
+        const uiTimer = this.uiScene?.time;
+        const uiTimerScale = Number(uiTimer?.timeScale ?? 1);
+        if (uiTimer?.delayedCall && uiTimer?.paused !== true && (!Number.isFinite(uiTimerScale) || uiTimerScale > 0)) {
+            uiTimer.delayedCall(520, showDemoCompletion);
+        } else {
+            showDemoCompletion();
+        }
     }
 
     restoreShockerBossState(snapshot = null) {
@@ -2927,6 +3003,9 @@ export class mapView extends Phaser.Scene {
 
     handlePhaseChanged(phaseKey, phaseInfo = null) {
         this._currentPhaseKey = phaseKey;
+        if ((phaseKey === "day" || phaseKey === "night") && this.getSimulationSpeed?.() !== 1) {
+            this.setSimulationSpeed(1);
+        }
         this.events.emit("phase:changed", phaseKey, phaseInfo || this.clock?.getPhaseInfo?.());
         if (phaseKey !== "night") {
             this.time?.delayedCall?.(0, () => this._tryPresentPendingTownXpReward());
@@ -4070,6 +4149,7 @@ export class mapView extends Phaser.Scene {
             }
         });
         this.clock = new Clock(this);
+        this._currentPhaseKey = this.clock.getPhaseKey?.() || this._currentPhaseKey;
         this.clock.paused = true;
         this.applySimulationSpeed(true);
         this._maybeShowDebugMilitiaLevel3Unlock();
@@ -5847,6 +5927,7 @@ export class mapView extends Phaser.Scene {
 ensureFarmInstructionUI() {
     const hasLiveUi =
         !!this.farmInstructionUI?.active &&
+        !!this.farmInstructionBg?.scene &&
         !!this.farmInstrLeft?.scene &&
         !!this.farmInstrMid?.scene &&
         !!this.farmInstrSeedCount?.scene &&
@@ -5856,19 +5937,22 @@ ensureFarmInstructionUI() {
 
     this.farmInstructionUI?.destroy?.(true);
     this.farmInstructionUI = null;
+    this.farmInstructionBg = null;
     this.farmInstrLeft = null;
     this.farmInstrMid = null;
     this.farmInstrSeedCount = null;
     this.farmInstrSeedIcon = null;
     this.farmInstrRight = null;
 
-    const y = 40; // below top bar
+    const y = 92;
     const x = this.cameras.main.width / 2;
 
     this.farmInstructionUI = this.add.container(x, y)
         .setScrollFactor(0)
         .setDepth(UIDEPTH + 10)
         .setVisible(false);
+
+    this.farmInstructionBg = this.add.graphics();
 
     // children we reuse
     this.farmInstrLeft = this.add.text(0, 0, "", {
@@ -5877,7 +5961,7 @@ ensureFarmInstructionUI() {
         fill: "#ffffff",
         stroke: "#000",
         strokeThickness: 3,
-    }).setOrigin(0, 0);
+    }).setOrigin(0, 0.5);
 
     this.farmInstrMid = this.add.text(0, 0, "", {
         fontSize: "16px",
@@ -5885,7 +5969,7 @@ ensureFarmInstructionUI() {
         fill: "#ffffff",
         stroke: "#000",
         strokeThickness: 3,
-    }).setOrigin(0, 0);
+    }).setOrigin(0, 0.5);
 
     this.farmInstrSeedCount = this.add.text(0, 0, "", {
         fontSize: "16px",
@@ -5893,11 +5977,11 @@ ensureFarmInstructionUI() {
         fill: "#00ff00",
         stroke: "#000",
         strokeThickness: 3,
-    }).setOrigin(0, 0);
+    }).setOrigin(0, 0.5);
 
-    this.farmInstrSeedIcon = this.add.image(0, 8, "seeds") // seed icon key MUST be 'seeds'
+    this.farmInstrSeedIcon = this.add.image(0, 0, "seeds") // seed icon key MUST be 'seeds'
         .setOrigin(0, 0.5)
-        .setScale(0.7);
+        .setDisplaySize(18, 18);
 
     this.farmInstrRight = this.add.text(0, 0, "", {
         fontSize: "16px",
@@ -5905,9 +5989,10 @@ ensureFarmInstructionUI() {
         fill: "#ff4444", // red for Esc part
         stroke: "#000",
         strokeThickness: 3,
-    }).setOrigin(0, 0);
+    }).setOrigin(0, 0.5);
 
     this.farmInstructionUI.add([
+        this.farmInstructionBg,
         this.farmInstrLeft,
         this.farmInstrMid,
         this.farmInstrSeedCount,
@@ -5920,12 +6005,16 @@ ensureFarmInstructionUI() {
     // keep centered on resize
         this._trackScaleResize(({ width }) => {
             if (this.farmInstructionUI) this.farmInstructionUI.setX(width / 2);
+            this.layoutFarmInstruction();
         });
 }
 
 layoutFarmInstruction() {
-    // layout left-to-right, then center container contents
-    const pad = 8;
+    if (!this.farmInstructionUI || !this.farmInstructionBg) return;
+
+    const padX = 18;
+    const padY = 10;
+    const partGap = 4;
 
     // hide seed bits unless they have text
     const seedVisible = !!this.farmInstrSeedCount.text;
@@ -5933,28 +6022,33 @@ layoutFarmInstruction() {
     this.farmInstrSeedCount.setVisible(seedVisible);
     this.farmInstrSeedIcon.setVisible(seedVisible);
 
-    let x = 0;
-    this.farmInstrLeft.setX(x);
-    x += this.farmInstrLeft.width + pad;
+    const parts = [
+        this.farmInstrLeft,
+        this.farmInstrMid,
+        ...(seedVisible ? [this.farmInstrSeedCount, this.farmInstrSeedIcon] : []),
+        this.farmInstrRight,
+    ].filter((part) => part && part.visible !== false);
 
-    this.farmInstrMid.setX(x);
-    x += this.farmInstrMid.width + pad;
+    const partWidth = (part) => part.displayWidth ?? part.width ?? 0;
+    const partHeight = (part) => part.displayHeight ?? part.height ?? 0;
+    const instructionW = parts.reduce((sum, part) => sum + partWidth(part), 0)
+        + partGap * Math.max(0, parts.length - 1);
+    const instructionH = parts.reduce((max, part) => Math.max(max, partHeight(part)), 0);
+    const bgW = instructionW + padX * 2;
+    const bgH = Math.max(30, instructionH + padY);
 
-    if (seedVisible) {
-        this.farmInstrSeedCount.setX(x);
-        x += this.farmInstrSeedCount.width + pad;
+    this.farmInstructionBg.clear();
+    this.farmInstructionBg.fillStyle(0x10293b, 0.72);
+    this.farmInstructionBg.fillRoundedRect(-bgW / 2, -bgH / 2, bgW, bgH, 12);
+    this.farmInstructionBg.fillStyle(0xffffff, 0.08);
+    this.farmInstructionBg.fillRoundedRect((-bgW / 2) + 2, (-bgH / 2) + 2, bgW - 4, Math.max(8, bgH * 0.42), 10);
+    this.farmInstructionBg.lineStyle(2, 0xffffff, 0.16);
+    this.farmInstructionBg.strokeRoundedRect(-bgW / 2, -bgH / 2, bgW, bgH, 12);
 
-        this.farmInstrSeedIcon.setX(x);
-        x += this.farmInstrSeedIcon.displayWidth + pad;
-    }
-
-    this.farmInstrRight.setX(x);
-    x += this.farmInstrRight.width;
-
-    // center the whole strip around container origin
-    const totalW = x;
-    for (const child of this.farmInstructionUI.list) {
-        child.x -= totalW / 2;
+    let cursorX = -instructionW / 2;
+    for (const part of parts) {
+        part.setPosition(cursorX, 0);
+        cursorX += partWidth(part) + partGap;
     }
 }
 
@@ -5970,10 +6064,10 @@ hideFarmInstruction() {
 setFarmInstructionPhase1() {
     this.ensureFarmInstructionUI();
 
-    this.farmInstrLeft.setText("Click spot to begin plot");
+    this.farmInstrLeft.setText("Farming | click spot to begin plot | ");
     this.farmInstrMid.setText("");               // no middle piece
     this.farmInstrSeedCount.setText("");         // no seed count in phase 1
-    this.farmInstrRight.setText(" Esc to cancel");
+    this.farmInstrRight.setText("ESC to cancel");
     this.farmInstrRight.setColor("#ff4444");     // red Esc
 
     this.showFarmInstruction();
@@ -5987,8 +6081,8 @@ setFarmInstructionPhase2(previewData) {
     const cappedTotal = Number(previewData?.cappedTotal || 0);
     const maxSeedsReached = !!previewData?.maxSeedsReached;
 
-    this.farmInstrLeft.setText("Select end spot");
-    this.farmInstrMid.setText(" - x");
+    this.farmInstrLeft.setText("Farming | select end spot | x");
+    this.farmInstrMid.setText("");
     this.farmInstrSeedCount.setText(String(totalNeeded));
 
     const enough = previewData?.enoughSeeds !== false;
@@ -5996,8 +6090,8 @@ setFarmInstructionPhase2(previewData) {
 
     this.farmInstrRight.setText(
         maxSeedsReached
-            ? `  Max ${cappedTotal} seeds reached. Esc to go back`
-            : "  Esc to go back"
+            ? ` | max ${cappedTotal} seeds reached | ESC to go back`
+            : " | ESC to go back"
     );
     this.farmInstrRight.setColor("#ff4444");
 
@@ -6509,6 +6603,7 @@ cancelFarmSelection(exitFarmMode = false) {
         // === Clock (right) ===
         const clockX = W - 160;
         this.clock = new Clock(this);
+        this._currentPhaseKey = this.clock.getPhaseKey?.() || this._currentPhaseKey;
         this.clockText = makeText(clockX, this.clock.formatTimeWithDay());
         this.clock.externalText = this.clockText; // pass reference
         this.topHudElements.push(this.clockText);
@@ -7357,6 +7452,27 @@ cancelFarmSelection(exitFarmMode = false) {
 }
 
 const GAME_RENDER_RESOLUTION = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+
+function installTextResolutionDefault(PhaserRef, resolution) {
+    const factoryProto = PhaserRef?.GameObjects?.GameObjectFactory?.prototype;
+    if (!factoryProto?.text || factoryProto.text._processV2ResolutionPatched) return;
+
+    const originalTextFactory = factoryProto.text;
+    const defaultResolution = Math.max(1, Number(resolution) || 1);
+
+    factoryProto.text = function textWithDefaultResolution(x, y, text, style = {}) {
+        const nextStyle = (style && typeof style === "object") ? { ...style } : {};
+        const styleResolution = Number(nextStyle.resolution);
+        if (!Number.isFinite(styleResolution) || styleResolution <= 0) {
+            nextStyle.resolution = defaultResolution;
+        }
+        return originalTextFactory.call(this, x, y, text, nextStyle);
+    };
+
+    factoryProto.text._processV2ResolutionPatched = true;
+}
+
+installTextResolutionDefault(Phaser, GAME_RENDER_RESOLUTION);
 
 const config = {
     type: Phaser.AUTO,

@@ -84,7 +84,10 @@ export class SaveManager {
   }
 
   static queueAutosave(reason = "mutation") {
-    return false;
+    const normalizedReason = String(reason || "mutation");
+    if (!normalizedReason.startsWith("town_xp")) return false;
+    if (!this.canSaveScene()) return false;
+    return this.saveNow(normalizedReason, { silent: true });
   }
 
   static queueDailyAutosave(day = null, reason = "day_start") {
@@ -127,6 +130,8 @@ export class SaveManager {
       seasonIndex: meta?.seasonIndex,
       simNowMs: snapshot?.progression?.simNowMs,
       runStats: snapshot?.progression?.runStats,
+      townXp: snapshot?.progression?.townXp,
+      resources: snapshot?.progression?.resources,
       unlocks: snapshot?.systems?.storeUnlocks,
       contracts: snapshot?.parcels?.parcelManager?.contracts || [],
     });

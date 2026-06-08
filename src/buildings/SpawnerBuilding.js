@@ -106,7 +106,7 @@ export class SpawnerBuilding {
     this.sprite.setDepth(50);
 
 
-    this.sprite.setInteractive({ cursor: "pointer" });
+    this.sprite.setInteractive({ useHandCursor: true });
     this.sprite.buildingRef = this;
     this.sprite.team = this.team;
 

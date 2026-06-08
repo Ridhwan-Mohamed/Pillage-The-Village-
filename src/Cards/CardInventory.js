@@ -45,6 +45,13 @@ export function normalizeCardInventory(inventory = null) {
     delete next.deck[cardId];
   }
 
+  for (const cardId of Object.keys(next.consumables)) {
+    const card = getMarketCardDefinition(cardId);
+    if (!card || card.kind !== MARKET_CARD_KIND.CONSUMABLE) {
+      delete next.consumables[cardId];
+    }
+  }
+
   return next;
 }
 

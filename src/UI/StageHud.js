@@ -1,6 +1,6 @@
 // src/UI/StageHud.js
 //
-// Tiny world-space HUD label for endless horde progression.
+// Tiny world-space HUD label for horde progression.
 // Renders with the world camera.
 
 import { UIDEPTH } from "../constants";
@@ -24,7 +24,7 @@ export function ensureStageHud(scene, {
 
   function recompute() {
     const stageIndex = Math.max(1, Number(StageState.stageIndex || 1));
-    txt.setText(`Endless Run - Horde ${stageIndex}`);
+    txt.setText(`Horde ${stageIndex}`);
   }
 
   recompute();

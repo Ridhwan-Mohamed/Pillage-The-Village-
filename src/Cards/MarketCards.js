@@ -2,7 +2,6 @@ import Phaser from "phaser";
 import autoWallIcon from "url:../assets/market/auto_wall_icon.png";
 import chainZapperIcon from "url:../assets/market/chain_zapper.png";
 import meteorDropIcon from "url:../assets/market/meteor_drop.png";
-import decoyBeaconIcon from "url:../assets/market/decoy_beacon.png";
 import fortifyPatchIcon from "url:../assets/market/fortify_patch.png";
 import shockMineIcon from "url:../assets/market/shock_mine.png";
 import teamHealIcon from "url:../assets/market/team_heal.png";
@@ -12,7 +11,6 @@ import adrenalineDraftIcon from "url:../assets/market/adrenaline_draft.png";
 import secondWindBellIcon from "url:../assets/market/second_wind_bell.png";
 import meleeCritBuffIcon from "url:../assets/market/melee_crit_buff.png";
 import projectileCritBuffIcon from "url:../assets/market/projectile_crit_buff.png";
-import decoyBeaconImg from "url:../assets/market/decoy_beacon_img.png";
 import shockMineImg from "url:../assets/market/shock_mine_img.png";
 import chainZapperImg from "url:../assets/market/chain_zapper_img.png";
 import meteorDropAnimation from "url:../assets/market/meteor_drop_animation.png";
@@ -48,14 +46,12 @@ export const MARKET_PLACEHOLDER_ASSETS = Object.freeze({
   },
   ghosts: {
     autoWall: "target_ghost_auto_wall_placeholder",
-    decoyBeacon: "target_ghost_decoy_beacon_placeholder",
     shockMine: "target_ghost_shock_mine_placeholder",
   },
   cardIcons: {
     autoWall: "card_icon_auto_wall_placeholder",
     chainZapper: "card_icon_chain_zapper_placeholder",
     meteorDrop: "card_icon_meteor_drop_placeholder",
-    decoyBeacon: "card_icon_decoy_beacon_placeholder",
     fortifyPatch: "card_icon_fortify_patch_placeholder",
     shockMine: "card_icon_shock_mine_placeholder",
     teamHeal: "card_icon_team_heal_placeholder",
@@ -73,7 +69,6 @@ export const MARKET_REAL_ASSETS = Object.freeze({
     autoWall: "market_icon_auto_wall",
     chainZapper: "market_icon_chain_zapper",
     meteorDrop: "market_icon_meteor_drop",
-    decoyBeacon: "market_icon_decoy_beacon",
     fortifyPatch: "market_icon_fortify_patch",
     shockMine: "market_icon_shock_mine",
     teamHeal: "market_icon_team_heal",
@@ -85,7 +80,6 @@ export const MARKET_REAL_ASSETS = Object.freeze({
     projectileCritBuff: "market_icon_projectile_crit_buff",
   },
   world: {
-    decoyBeacon: "market_decoy_beacon_img",
     shockMine: "market_shock_mine_img",
     chainZapper: "market_chain_zapper_img",
     meteorDrop: "market_meteor_drop_animation",
@@ -157,19 +151,6 @@ export const MARKET_CARDS = Object.freeze([
     OUTLINE: "#ffad73",
     repeatBuyInflation: 0.15,
     balanceNote: "Friendly fire allowed; high impact with positioning risk.",
-  },
-  {
-    id: "decoy_beacon",
-    image: MARKET_REAL_ASSETS.cardIcons.decoyBeacon,
-    name: "Decoy Beacon",
-    text: "Place a fragile lure. When destroyed, it explodes near raiders.",
-    kind: MARKET_CARD_KIND.CONSUMABLE,
-    marketSection: MARKET_CARD_SECTION.STRATEGY,
-    activation: "decoy_beacon",
-    price: 190,
-    OUTLINE: "#ffe07a",
-    repeatBuyInflation: 0.15,
-    balanceNote: "Temporary target control, not a permanent blocker.",
   },
   {
     id: "fortify_patch",
@@ -374,7 +355,6 @@ export function loadMarketCardAssets(scene) {
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.autoWall, autoWallIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.chainZapper, chainZapperIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.meteorDrop, meteorDropIcon);
-  loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.decoyBeacon, decoyBeaconIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.fortifyPatch, fortifyPatchIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.shockMine, shockMineIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.teamHeal, teamHealIcon);
@@ -384,7 +364,6 @@ export function loadMarketCardAssets(scene) {
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.secondWindBell, secondWindBellIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.meleeCritBuff, meleeCritBuffIcon);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.cardIcons.projectileCritBuff, projectileCritBuffIcon);
-  loadImageIfNeeded(scene, MARKET_REAL_ASSETS.world.decoyBeacon, decoyBeaconImg);
   loadImageIfNeeded(scene, MARKET_REAL_ASSETS.world.shockMine, shockMineImg);
   loadSpritesheetIfNeeded(scene, MARKET_REAL_ASSETS.world.chainZapper, chainZapperImg, 32, 32);
   loadSpritesheetIfNeeded(scene, MARKET_REAL_ASSETS.world.meteorDrop, meteorDropAnimation, 32, 32);
@@ -453,7 +432,6 @@ export function loadMarketCardPlaceholderAssets(scene) {
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.autoWall, { accent: 0x7bd9ff, icon: "wall" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.chainZapper, { accent: 0xa7f0ff, icon: "bolt" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.meteorDrop, { accent: 0xffad73, icon: "meteor" });
-  makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.decoyBeacon, { accent: 0xffe07a, icon: "beacon" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.fortifyPatch, { accent: 0x9dffa5, icon: "cross" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.shockMine, { accent: 0xb28cff, icon: "mine" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.cardIcons.teamHeal, { accent: 0x7cffb2, icon: "cross" });
@@ -468,6 +446,5 @@ export function loadMarketCardPlaceholderAssets(scene) {
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.targetCursors.meteorDrop, { accent: 0xffad73, icon: "target" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.targetCursors.fortifyPatch, { accent: 0x9dffa5, icon: "cross" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.ghosts.autoWall, { accent: 0x7bd9ff, icon: "wall" });
-  makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.ghosts.decoyBeacon, { accent: 0xffe07a, icon: "beacon" });
   makePlaceholderTexture(scene, MARKET_PLACEHOLDER_ASSETS.ghosts.shockMine, { accent: 0xb28cff, icon: "mine" });
 }

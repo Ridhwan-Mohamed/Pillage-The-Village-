@@ -17,8 +17,8 @@ import { AudioManager } from "../Manager/AudioManager";
 import { VisibilitySystem } from "../UI/VisibilitySystem";
 import { Map as GameMap } from "../map";
 
-const FINALIZE_BUTTON_WIDTH = 54;
-const FINALIZE_BUTTON_HEIGHT = 34;
+const FINALIZE_BUTTON_WIDTH = 172;
+const FINALIZE_BUTTON_HEIGHT = 46;
 
 function normalizeCostBundle(rawCost) {
   if (rawCost == null) return {};
@@ -904,21 +904,28 @@ finalize() {
 
       this.uiBg = this.scene.add.graphics();
 
-      this.uiText = this.scene.add.text(0, 0, "", {
+      const makeInstructionText = (color = "#ffffff") => this.scene.add.text(0, 0, "", {
         fontSize: "16px",
         fontFamily: "Bungee",
-        color: "#ffffff",
+        color,
         stroke: "#000",
         strokeThickness: 3,
-      }).setOrigin(0.5, 0.5);
+      }).setOrigin(0, 0.5);
+
+      this.uiTextParts = [
+        makeInstructionText("#ffffff"),
+        makeInstructionText("#ff4a4a"),
+        makeInstructionText("#ffffff"),
+      ];
 
       this.finalBtn = this.scene.add.text(0, 0, "✔", {
-        fontSize: "14px",
+        fontSize: "18px",
         fontFamily: "Bungee",
         color: "#ffffff",
         stroke: "#02111d",
         strokeThickness: 4,
       }).setOrigin(0.5, 0.5);
+      this.finalBtn.setText("\u2705 Start Build");
 
       this.finalBtn.setBackgroundColor("rgba(0,0,0,0)");
       this.finalBtn.setPadding(0, 0, 0, 0);
@@ -929,7 +936,7 @@ finalize() {
         this._drawFinalizeButton();
         this._activateFinalizeButton();
       });
-      this.ui.add([this.uiBg, this.uiText, this.finalBtn]);
+      this.ui.add([this.uiBg, ...this.uiTextParts, this.finalBtn]);
       this.finalBtnGlass = this.scene.add.graphics();
       this.finalBtnHit = this.scene.add.zone(0, 0, FINALIZE_BUTTON_WIDTH, FINALIZE_BUTTON_HEIGHT);
       this._setFinalizeHitInteractive();
@@ -971,14 +978,18 @@ finalize() {
   }
 
   _layoutUI() {
-    if (!this.ui || !this.uiText || !this.uiBg || !this.finalBtn) return;
+    if (!this.ui || !this.uiTextParts?.length || !this.uiBg || !this.finalBtn) return;
 
     const padX = 18;
     const padY = 10;
-    const spacingY = 10;
-    const w = this.uiText.width + padX * 2;
-    const h = this.uiText.height + padY;
-    const bgH = Math.max(26, h);
+    const spacingY = 12;
+    const textGap = 0;
+    const instructionW = this.uiTextParts.reduce((sum, part) => sum + (part?.visible === false ? 0 : part.width), 0)
+      + textGap * Math.max(0, this.uiTextParts.length - 1);
+    const instructionH = this.uiTextParts.reduce((max, part) => Math.max(max, part?.height || 0), 0);
+    const w = instructionW + padX * 2;
+    const h = instructionH + padY;
+    const bgH = Math.max(30, h);
 
     this.uiBg.clear();
     this.uiBg.fillStyle(0x10293b, 0.72);
@@ -987,9 +998,15 @@ finalize() {
     this.uiBg.fillRoundedRect((-w / 2) + 2, (-bgH / 2) + 2, w - 4, Math.max(8, bgH * 0.42), 10);
     this.uiBg.lineStyle(2, 0xffffff, 0.16);
     this.uiBg.strokeRoundedRect(-w / 2, -bgH / 2, w, bgH, 12);
-    this.uiText.setPosition(0, 0);
 
-    const btnY = bgH / 2 + spacingY + this.finalBtn.height / 2;
+    let cursorX = -instructionW / 2;
+    for (const part of this.uiTextParts) {
+      if (!part) continue;
+      part.setPosition(cursorX, 0);
+      cursorX += part.width + textGap;
+    }
+
+    const btnY = bgH / 2 + spacingY + FINALIZE_BUTTON_HEIGHT / 2;
     this.finalBtn.setPosition(0, btnY);
     this.finalBtnGlass?.setPosition?.(0, 0);
     this.finalBtnHit?.setPosition?.(0, btnY);
@@ -1097,16 +1114,35 @@ finalize() {
     return true;
   }
 
+  _setInstructionParts(prefix = "", escText = "", suffix = "", valid = true) {
+    const normalColor = valid ? "#66ff66" : "#ff6666";
+    const parts = this.uiTextParts || [];
+    parts[0]?.setText(prefix);
+    parts[0]?.setColor(normalColor);
+    parts[1]?.setText(escText);
+    parts[1]?.setColor("#ff4a4a");
+    parts[2]?.setText(suffix);
+    parts[2]?.setColor(normalColor);
+  }
+
   _setPhase1Text(valid = true, count = this._queuedCount()) {
     const action = count > 0 ? "click to start next segment" : "click to start placement";
-    this.uiText.setText(`Placing ${this._wallLabel()} | ${count} queued | ${action} | esc to cancel`);
-    this.uiText.setColor(valid ? "#66ff66" : "#ff6666");
+    this._setInstructionParts(
+      `Placing ${this._wallLabel()} | ${count} queued | ${action} | `,
+      "ESC to cancel",
+      "",
+      valid
+    );
     this._layoutUI();
   }
 
   _setPhase2Text(valid = true, count = this._queuedCount(this.previewCells)) {
-    this.uiText.setText(`Placing ${this._wallLabel()} | ${count} queued | click to end segment | esc to undo`);
-    this.uiText.setColor(valid ? "#66ff66" : "#ff6666");
+    this._setInstructionParts(
+      `Placing ${this._wallLabel()} | ${count} queued | click to end segment | `,
+      "ESC to undo",
+      "",
+      valid
+    );
     this._layoutUI();
   }
 

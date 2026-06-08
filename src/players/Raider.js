@@ -990,7 +990,12 @@ export class Raider {
     }
 
     static _ensureSiegePlanner() {
-        if (!Map.siegePlanner) {
+        const plannerStale =
+            !Map.siegePlanner ||
+            Map.siegePlanner.enemyNavGrid !== Map.enemyNavGrid ||
+            Map.siegePlanner.regionSystem !== Map.enemyRegionSystem;
+
+        if (plannerStale) {
             Map.siegePlanner = new SiegePlanner({
                 squareSize: SQUARESIZE,
                 enemyNavGrid: Map.enemyNavGrid,

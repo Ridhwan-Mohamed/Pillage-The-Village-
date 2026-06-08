@@ -121,7 +121,7 @@ export class Prison {
     this.lightId = VisibilitySystem.addLightSource({ x: cx, y: cy, r: 6, brightness: 2 });
 
     this.sprite.play("prison_closed_idle");
-    this.sprite.setInteractive({ cursor: "pointer" });
+    this.sprite.setInteractive({ useHandCursor: true });
 
     // footprint collider for overlaps/projectiles (matches Tower)
     const w = lenX * SQUARESIZE;

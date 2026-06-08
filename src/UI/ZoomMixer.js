@@ -18,8 +18,8 @@ export class ZoomMixer {
 
   constructor() {
     this.mode = 'detailed';
-    this.IN_THRESHOLD  = 0.45;
-    this.OUT_THRESHOLD = 0.35;
+    this.IN_THRESHOLD  = 0.58;
+    this.OUT_THRESHOLD = 0.50;
     this.detailedZoom = 1.0;
     this.overviewZoom = 0.3;
     this.targetZoom = this.detailedZoom;
@@ -390,7 +390,7 @@ export class ZoomMixer {
   }
 
   /** Mouse wheel handler: pointer-centric zoom + hysteresis crossfade. */
-  hookWheel({ minZoom = 0.2, maxZoom = 2.0, inThresh = 0.50, outThresh = 0.40 } = {}) {
+  hookWheel({ minZoom = 0.2, maxZoom = 2.0, inThresh = 0.58, outThresh = 0.50 } = {}) {
     const scene = ZoomMixer.scene;
     this.IN_THRESHOLD  = inThresh;
     this.OUT_THRESHOLD = outThresh;

@@ -53,8 +53,7 @@ export class Farmer {
             1
         );
         farmer.setInteractive();
-        farmer.id = this.count;
-        Player.count += 1;
+        farmer.id = Player.count++;
         farmer.setOrigin(0.5,0.5);
         farmer.setDepth(BLOCKDEPTH+1);
         farmer.roam = false;

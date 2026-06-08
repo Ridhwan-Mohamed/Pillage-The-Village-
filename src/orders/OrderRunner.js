@@ -1802,6 +1802,39 @@ export class OrderRunner {
     return removedUnits;
   }
 
+  static satisfyManagedWaterOrder(orderId, storedAmount = 0, teamNumber = 1) {
+    const team = Teams.teamLists?.[`${teamNumber}`];
+    const automation = Teams.ensureTownAutomation?.(teamNumber);
+    if (!team || !automation || automation.waterOrderId !== orderId) return 0;
+
+    const appliedAmount = Math.min(
+      Math.max(0, Number(storedAmount || 0) || 0),
+      Math.max(0, Number(automation.waterRemainingCount || 0))
+    );
+    if (!(appliedAmount > 0)) return 0;
+
+    automation.waterRemainingCount = Math.max(0, Number(automation.waterRemainingCount || 0) - appliedAmount);
+    automation.waterDeliveredCount = Math.max(0, Number(automation.waterDeliveredCount || 0)) + appliedAmount;
+
+    this.trimManagedWaterOrder(orderId, automation.waterRemainingCount, teamNumber);
+
+    if (automation.waterRemainingCount <= 0) {
+      const players = Array.isArray(team.playerList) ? team.playerList : Player.troops;
+      for (const troop of players || []) {
+        if (!troop?.active || troop.currentOrder?.id !== orderId) continue;
+        if (troop.currentOrder?.kind !== ORDER_KINDS.MAKE_WATER || troop.currentOrder?.source !== "function_tab") continue;
+        this._clearTroopOrder(troop, { interrupt: true, targetState: CONTROL_STATES.TRACK_MODE });
+      }
+      this._cleanupDirectOvenJobs(orderId, teamNumber);
+      Teams.clearTownWaterBatch?.(teamNumber, orderId);
+    } else {
+      automation.waterEnabled = true;
+      Teams._refreshFunctionTabUi?.();
+    }
+
+    return appliedAmount;
+  }
+
   static _ovenDistanceToTroop(troop, oven) {
     const centerX = (Number(oven?.x || 0) + 1) * SQUARESIZE;
     const centerY = (Number(oven?.y || 0) + 1) * SQUARESIZE;

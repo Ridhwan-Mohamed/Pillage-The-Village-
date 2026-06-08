@@ -439,28 +439,6 @@ export default class BuildTab {
       });
     }
 
-    if (hasStoreUnlock(STORE_UNLOCK_KEYS.turret)) {
-      defs.splice(3, 0, {
-        key: "turret",
-        name: "Turret",
-        desc: "Auto-firing defense that tracks enemy raiders.",
-        rarity: "epic",
-        iconKey: "icon_turret_store",
-        tileTypeName: "turret",
-      });
-    }
-
-    if (hasStoreUnlock(STORE_UNLOCK_KEYS.catapult)) {
-      defs.splice(4, 0, {
-        key: "catapult",
-        name: "Catapult",
-        desc: "Long-range siege engine that lobs heavy stones.",
-        rarity: "epic",
-        iconKey: "icon_catapult_store",
-        tileTypeName: "catapult",
-      });
-    }
-
     return defs;
   }
 
@@ -718,7 +696,21 @@ export default class BuildTab {
     const plan = this._quickSellState?.key === def.key ? this._quickSellState.plan : null;
     if (!plan) return;
 
-    const { soldAnything } = this._runQuickSellPlan(plan, ref?.quickSellConfirmHit ?? null);
+    const costObj = getDefCost(def, this.scene);
+    if (hasResources(this.scene, costObj)) {
+      this._closeQuickSell();
+      this._recruitUnit(def, { allowQuickSell: false });
+      return;
+    }
+
+    const freshPlan = this._buildQuickSellPlan(def);
+    if (!freshPlan) {
+      this._closeQuickSell();
+      showAlert(this.scene, "No spare stock to sell", "#ff5555");
+      return;
+    }
+
+    const { soldAnything } = this._runQuickSellPlan(freshPlan, ref?.quickSellConfirmHit ?? null);
     this._closeQuickSell();
     if (!soldAnything) {
       showAlert(this.scene, "No spare stock to sell", "#ff5555");

@@ -390,7 +390,7 @@ export class Wall {
     this.sprite.team = this.team;
 
     if (!this.sprite.input) {
-      this.sprite.setInteractive({ cursor: "pointer" });
+      this.sprite.setInteractive({ useHandCursor: true });
     }
 
     if (this.sprite._wallHoverBound === this) return;
@@ -411,7 +411,7 @@ export class Wall {
     if (!this.sprite || !this.sprite.setInteractive || !this.scene) return;
 
     this.sprite.removeAllListeners?.("pointerdown");
-    this.sprite.setInteractive({ cursor: "pointer" });
+    this.sprite.setInteractive({ useHandCursor: true });
     this.sprite.team = this.team;
 
     this.sprite.on("pointerdown", () => {

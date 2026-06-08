@@ -1695,8 +1695,9 @@ export class DraftStartMenu {
     const backX = layout.pagePad + (backWidth / 2);
     const confirmX = width - layout.pagePad - (layout.confirmButtonWidth / 2);
     const buttonY = layout.footerY;
+    const summaryShellHeight = footerHeight + 5;
 
-    const shell = this._makeRoundedPanel(footerWidth, footerHeight, {
+    const shell = this._makeRoundedPanel(footerWidth, summaryShellHeight, {
       fillColor: HEADER_FILL,
       fillAlpha: 0.8,
       strokeColor: 0xb9efff,
@@ -1707,7 +1708,7 @@ export class DraftStartMenu {
       shadowOffsetY: Math.round(12 * layout.scale),
     });
     shell.x = width / 2;
-    shell.y = buttonY;
+    shell.y = buttonY + 2.5;
 
     const labelY = buttonY - (footerHeight / 2) + Math.round(20 * layout.scale) - 1;
     const summaryY = labelY + Math.round(20 * layout.scale);

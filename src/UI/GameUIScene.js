@@ -45,6 +45,7 @@ export class GameUIScene extends Phaser.Scene {
     this.topHud = null;
     this._topHudLeftGroups = [];
     this._topHudLayoutConfig = null;
+    this._topHudNeedWarnings = {};
     this.moneyIcon = null;
     this.moneyHoverTarget = null;
     this.moneyIconBaseScaleX = 1;
@@ -256,6 +257,7 @@ export class GameUIScene extends Phaser.Scene {
     this._destroyBossStorm();
     this.uiBottomBar?.ui?.destroy?.(true);
     this.uiBottomBar = null;
+    this._clearTopHudNeedWarningTweens();
     this.topHud?.destroy?.(true);
     this.topHud = null;
     this.reliefPackageIcon = null;
@@ -746,6 +748,7 @@ export class GameUIScene extends Phaser.Scene {
     this.topHudElements = [];
     this.topHudHoverTargets = [];
     this._topHudLeftGroups = [];
+    this._topHudNeedWarnings = {};
     this._topHudLayoutConfig = {
       startX: 12,
       spacing,
@@ -754,7 +757,7 @@ export class GameUIScene extends Phaser.Scene {
       moneyGap: 6,
     };
 
-    const addLeftGroup = ({ icon, text = null, hover = null, minTextWidth = 0, iconGap = 4, visibleWhen = null }) => {
+    const addLeftGroup = ({ icon, text = null, hover = null, minTextWidth = 0, iconGap = 4, visibleWhen = null, warningBg = null, warningKey = null }) => {
       this._topHudLeftGroups.push({
         icon,
         text,
@@ -762,11 +765,14 @@ export class GameUIScene extends Phaser.Scene {
         minTextWidth,
         iconGap,
         visibleWhen,
+        warningBg,
+        warningKey,
       });
     };
 
     for (const item of needs) {
       const leftX = x;
+      const warningBg = this.add.graphics().setVisible(false).setAlpha(0);
       const icon = makeIcon(x, item.key);
       x += iconSize + 4;
       const display = item.need ? `${item.have}/${item.need}` : `${item.have}`;
@@ -776,8 +782,10 @@ export class GameUIScene extends Phaser.Scene {
 
       if (item.key === "foodIcon") this.foodText = text;
       if (item.key === "waterIcon") this.waterText = text;
+      if (item.key === "foodIcon") this._topHudNeedWarnings.food = { bg: warningBg, active: false, tween: null };
+      if (item.key === "waterIcon") this._topHudNeedWarnings.water = { bg: warningBg, active: false, tween: null };
 
-      this.topHudElements.push(icon, text);
+      this.topHudElements.push(warningBg, icon, text);
       const hover = registerHover(leftX, x - spacing, item.key === "foodIcon" ? "Food" : "Water");
       this.topHudHoverTargets.push(hover);
       addLeftGroup({
@@ -785,6 +793,8 @@ export class GameUIScene extends Phaser.Scene {
         text,
         hover,
         minTextWidth: () => this._getTopHudScaledRatioWidth(text),
+        warningBg,
+        warningKey: item.key === "foodIcon" ? "food" : "water",
       });
     }
 
@@ -1041,14 +1051,17 @@ export class GameUIScene extends Phaser.Scene {
       const iconWidth = Number(group.icon?.displayWidth || group.icon?.width || 0);
       x += iconWidth + Number(group.iconGap ?? 4);
 
+      let textRightX = x;
       if (group.text) {
         group.text.setX(x);
         const resolvedMinWidth = typeof group.minTextWidth === "function"
           ? Number(group.minTextWidth(group) || 0)
           : Number(group.minTextWidth || 0);
-        x += Math.max(Number(group.text.width || 0), resolvedMinWidth);
+        textRightX = x + Math.max(Number(group.text.width || 0), resolvedMinWidth);
+        x = textRightX;
       }
 
+      this._layoutTopHudNeedWarning(group, leftX, textRightX, barHeight);
       x += spacing;
 
       if (group.hover) {
@@ -1059,6 +1072,66 @@ export class GameUIScene extends Phaser.Scene {
     }
 
     this._layoutTopHudMoneyGroup(x - spacing, layoutWidth);
+  }
+
+  _layoutTopHudNeedWarning(group, leftX, rightX, barHeight = 44) {
+    const bg = group?.warningBg;
+    if (!bg) return;
+
+    const warning = this._topHudNeedWarnings?.[group.warningKey];
+    const visible = !!warning?.active && group.icon?.visible !== false && group.text?.visible !== false;
+    bg.clear();
+    bg.setVisible(visible);
+    if (!visible) return;
+
+    const padX = 5;
+    const bgHeight = Math.max(24, Math.min(30, Number(barHeight || 44) - 14));
+    const bgY = Math.round((Number(barHeight || 44) - bgHeight) / 2);
+    const width = Math.max(40, Math.ceil(rightX - leftX) + padX * 2);
+    bg.fillStyle(0x8f1111, 1);
+    bg.fillRoundedRect(Math.floor(leftX - padX), bgY, width, bgHeight, 9);
+    bg.lineStyle(1.5, 0xff8b8b, 0.62);
+    bg.strokeRoundedRect(Math.floor(leftX - padX), bgY, width, bgHeight, 9);
+  }
+
+  _setTopHudNeedWarning(key, shouldWarn = false) {
+    const warning = this._topHudNeedWarnings?.[key];
+    const bg = warning?.bg;
+    if (!bg) return;
+
+    const active = !!shouldWarn;
+    if (warning.active === active) return;
+
+    warning.active = active;
+    warning.tween?.remove?.();
+    warning.tween = null;
+
+    if (!active) {
+      bg.setVisible(false);
+      bg.setAlpha(0);
+      return;
+    }
+
+    bg.setVisible(true);
+    bg.setAlpha(0.24);
+    warning.tween = this.tweens.add({
+      targets: bg,
+      alpha: { from: 0.22, to: 0.64 },
+      duration: 420,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+  }
+
+  _clearTopHudNeedWarningTweens() {
+    for (const warning of Object.values(this._topHudNeedWarnings || {})) {
+      warning?.tween?.remove?.();
+      if (warning) warning.tween = null;
+      warning?.bg?.setVisible?.(false);
+      warning?.bg?.setAlpha?.(0);
+    }
+    this._topHudNeedWarnings = {};
   }
 
   _getTopHudNeedCount() {
@@ -1122,6 +1195,9 @@ export class GameUIScene extends Phaser.Scene {
       node.setText(`${snapshot.water}/${snapshot.needCount}`);
       node.setColor(snapshot.water >= snapshot.needCount ? "#00ff00" : "#ff3333");
     });
+    const hasNeed = snapshot.needCount > 0;
+    this._setTopHudNeedWarning("food", hasNeed && snapshot.food < snapshot.needCount);
+    this._setTopHudNeedWarning("water", hasNeed && snapshot.water < snapshot.needCount);
     this._mutateText(this.seedsText, (node) => node.setText(`${snapshot.seeds}`));
     this._mutateText(this.berryText, (node) => node.setText(`${snapshot.berries}`));
     this._mutateText(this.woodText, (node) => node.setText(`${snapshot.wood}`));
@@ -1976,11 +2052,18 @@ export class GameUIScene extends Phaser.Scene {
     });
   }
 
-  _bindTopHudHover(target, label) {
+  _bindTopHudHover(target, label, opts = {}) {
     target.on("pointerover", () => {
-      const anchorX = target.x + (this.topHud?.x ?? 0);
+      if (typeof opts.canShow === "function" && !opts.canShow()) return;
       const resolvedLabel = typeof label === "function" ? label() : label;
-      this._showTopHudHover(resolvedLabel, anchorX);
+      if (!resolvedLabel) return;
+      const anchor = this._getUiPoint(target);
+      const fallbackX = target.x + (this.topHud?.x ?? 0);
+      const anchorX = Number.isFinite(anchor?.x) ? anchor.x : fallbackX;
+      const targetY = typeof opts.targetY === "function"
+        ? opts.targetY(target, anchor)
+        : (opts.targetY ?? 56);
+      this._showTopHudHover(resolvedLabel, anchorX, targetY);
     });
     target.on("pointerout", () => {
       this._topHudHoverHideTimer?.remove?.(false);
@@ -2222,9 +2305,11 @@ export class GameUIScene extends Phaser.Scene {
       });
     }
 
-    const hardFullStorages = storages.filter((storage) => storage.getStorageWarningState?.() === "full");
-    const slotLockedStorages = storages.filter((storage) => storage.getStorageWarningState?.() === "slots");
-    if (hardFullStorages.length > 0 || slotLockedStorages.length > 0) {
+    const storageWarningStates = storages.map((storage) => storage.getStorageWarningState?.() ?? null);
+    const hardFullStorages = storages.filter((storage, index) => storageWarningStates[index] === "full");
+    const slotLockedStorages = storages.filter((storage, index) => storageWarningStates[index] === "slots");
+    const blockedStorageCount = hardFullStorages.length + slotLockedStorages.length;
+    if (storages.length > 0 && blockedStorageCount === storages.length) {
       const detailParts = [];
       if (hardFullStorages.length > 0) detailParts.push(`${hardFullStorages.length} full`);
       if (slotLockedStorages.length > 0) detailParts.push(`${slotLockedStorages.length} slot-filled`);
@@ -2476,7 +2561,7 @@ export class GameUIScene extends Phaser.Scene {
       const stage = Math.max(1, Number(StageState.stageIndex || 1));
       const nextUnlock = getNextHordeUnlock(stage);
       const preview = this.worldScene?.getUpcomingHordePreviewSummary?.() ?? null;
-      const line1 = `\uD83C\uDFF9 Endless Run`;
+      const line1 = `\uD83C\uDFF9 Town Defense`;
       const line2 = `\uD83D\uDD25 Horde ${stage}`;
       const didUpdatePrimary = this._mutateText(this.stageMetaText, (node) => {
         node.setText(`${line1}\n${line2}`);
@@ -2649,6 +2734,8 @@ export class GameUIScene extends Phaser.Scene {
       const isOverview = mixer.mode === "overview";
       triggerZoom(isOverview ? (mixer.detailedZoom ?? 1) : (mixer.overviewZoom ?? 0.3));
     });
+    this._bindTopHudHover(speedBtn.bg, "Speed");
+    this._bindTopHudHover(zoomBtn.bg, "Zoom");
 
     root.updateState = () => {
       const world = this.worldScene;
@@ -3482,9 +3569,13 @@ export class GameUIScene extends Phaser.Scene {
       label.setScale(1.05);
     });
     bg.on("pointerout", () => root.refresh?.());
+    this._bindTopHudHover(bg, "Pause", {
+      canShow: () => !this.pauseMenu?.isOpen,
+    });
     bg.on("pointerdown", (pointer, lx, ly, event) => {
       event?.stopPropagation?.();
       AudioManager.playMenuClick();
+      this._hideTopHudHover(true);
       if (this.pauseMenu?.isOpen) this.closePauseMenu();
       else this.openPauseMenu();
     });
@@ -5375,7 +5466,7 @@ export class GameUIScene extends Phaser.Scene {
     });
     badgeBg.setPosition(0, -(panelHeight / 2) + 54);
 
-    const badgeText = this.add.text(0, badgeBg.y, summaryData?.badgeLabel || "ENDLESS RUN RECAP", {
+    const badgeText = this.add.text(0, badgeBg.y, summaryData?.badgeLabel || "RUN RECAP", {
       fontFamily: "Bungee",
       fontSize: "14px",
       color: "#5b3410",
@@ -5430,8 +5521,8 @@ export class GameUIScene extends Phaser.Scene {
     const unlockLabels = Array.isArray(summaryData?.troopUnlockLabels) ? summaryData.troopUnlockLabels : [];
     const unlockHeaderY = gridBottom + 42;
     const unlockHeaderText = unlockLabels.length
-      ? "Run-Earned Troops"
-      : "Run-Earned Troops: None This Run";
+      ? (summaryData?.unlockHeaderLabel || "Run-Earned Troops")
+      : (summaryData?.emptyUnlockHeaderLabel || "Run-Earned Troops: None This Run");
     const unlockHeader = this.add.text(0, unlockHeaderY, unlockHeaderText, {
       fontFamily: "Bungee",
       fontSize: "13px",
@@ -5543,7 +5634,7 @@ export class GameUIScene extends Phaser.Scene {
       stroke: "#f8feff",
       strokeThickness: 2,
     }).setOrigin(0.5);
-    const buttonHint = this.add.text(0, buttonBg.y + 14, "Fade back to the clouds", {
+    const buttonHint = this.add.text(0, buttonBg.y + 14, summaryData?.restartHint || "Fade back to the clouds", {
       fontFamily: "Bungee",
       fontSize: "10px",
       color: "#d8f6ff",

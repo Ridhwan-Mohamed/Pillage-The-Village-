@@ -34,7 +34,6 @@ const TARGETED_STORE_ACTIVATIONS = new Set([
   "auto_wall",
   "chain_zapper",
   "meteor_drop",
-  "decoy_beacon",
   "fortify_patch",
   "shock_mine",
 ]);

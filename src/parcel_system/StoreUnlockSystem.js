@@ -1,4 +1,5 @@
 const STORAGE_KEY = "processv2.store_unlocks_v1";
+const DISABLED_STORE_UNLOCK_KEYS = Object.freeze(["turret", "catapult"]);
 
 let cachedUnlocks = null;
 
@@ -24,6 +25,12 @@ function loadUnlocks() {
     const raw = storage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     cachedUnlocks = new Set(Array.isArray(parsed) ? parsed.filter((key) => typeof key === "string") : []);
+    let removedDisabled = false;
+    for (const key of DISABLED_STORE_UNLOCK_KEYS) {
+      if (!cachedUnlocks.delete(key)) continue;
+      removedDisabled = true;
+    }
+    if (removedDisabled) persistUnlocks();
   } catch {
     cachedUnlocks = new Set();
   }
@@ -51,6 +58,7 @@ export const STORE_UNLOCK_KEYS = Object.freeze({
 
 export function hasStoreUnlock(key) {
   if (!key) return false;
+  if (DISABLED_STORE_UNLOCK_KEYS.includes(key)) return false;
   return loadUnlocks().has(key);
 }
 
@@ -60,6 +68,7 @@ export function getStoreUnlockSnapshot() {
 
 export function unlockStoreItem(key, scene = null) {
   if (!key) return false;
+  if (DISABLED_STORE_UNLOCK_KEYS.includes(key)) return false;
 
   const unlocks = loadUnlocks();
   const changed = !unlocks.has(key);

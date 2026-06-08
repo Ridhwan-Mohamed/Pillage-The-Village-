@@ -58,6 +58,8 @@ import zap2 from 'url:../assets/audio/zap2.ogg';
 import zap3 from 'url:../assets/audio/zap3.ogg';
 import rain_ambience from 'url:../assets/audio/rain_ambience.ogg';
 import thunder from 'url:../assets/audio/thunder.ogg';
+import meteor_flyby from 'url:../assets/audio/meteor_flyby.ogg';
+import meteor_impact from 'url:../assets/audio/meteor_impact.ogg';
 
 export class AudioManager {
   static scene = null;
@@ -112,6 +114,8 @@ export class AudioManager {
     "sfx_shocker_zap_2",
     "sfx_shocker_zap_3",
     "sfx_boss_thunder",
+    "sfx_meteor_flyby",
+    "sfx_meteor_impact",
   ]);
   static _worldAudioPaused = false;
   static _pausableWorldLoopVolumes = new Map();
@@ -215,6 +219,8 @@ export class AudioManager {
     scene.load.audio("sfx_shocker_zap_3", zap3);
     scene.load.audio("amb_boss_rain", rain_ambience);
     scene.load.audio("sfx_boss_thunder", thunder);
+    scene.load.audio("sfx_meteor_flyby", meteor_flyby);
+    scene.load.audio("sfx_meteor_impact", meteor_impact);
   }
 
   static _loadSettings() {
@@ -465,6 +471,20 @@ export class AudioManager {
             rate: this._clamp(Number(opts.rate ?? (0.94 + Math.random() * 0.12)), 0.84, 1.16),
         });
         return true;
+    }
+
+    static playMeteorFlyby(opts = {}) {
+        this.playWorldSound("sfx_meteor_flyby", {
+            volume: opts.volume ?? 0.42,
+            rate: opts.rate ?? (0.98 + Math.random() * 0.04),
+        });
+    }
+
+    static playMeteorImpact(opts = {}) {
+        this.playWorldSound("sfx_meteor_impact", {
+            volume: opts.volume ?? 0.48,
+            rate: opts.rate ?? (0.96 + Math.random() * 0.08),
+        });
     }
 
     static startBossRainAmbience(opts = {}) {

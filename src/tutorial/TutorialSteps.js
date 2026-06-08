@@ -10,7 +10,12 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "farmer_choices",
     speaker: "farmer",
-    text: "You decide when to expand, what to build, what to gather, and how prepared your town is when danger shows up.",
+    text: "Each day gives you time to grow, gather, build, and prepare.",
+  },
+  {
+    id: "farmer_goal",
+    speaker: "farmer",
+    text: "Keep one goal in mind: reach Sunday night, then defeat The Shocker to beat the game.",
   },
   {
     id: "top_bar",
@@ -22,13 +27,13 @@ export const TUTORIAL_STEPS = Object.freeze([
     id: "top_bar_needs",
     speaker: "farmer",
     highlight: "topHud",
-    text: "Your people eat Food and drink Water to stay active. Seeds let you plant and grow food. Berries energize and heal your players.",
+    text: "Food and Water keep your townfolk alive and active. Seeds grow more food. Berries can heal and energize your players.",
   },
   {
     id: "top_bar_supplies",
     speaker: "farmer",
     highlight: "topHud",
-    text: "Wood and Stone builds your town. Growth Permits buy contracts. Money lets you recruit and pay for key purchases.",
+    text: "Wood and Stone are what builds up your town. Growth Permits buy contracts. Money helps you recruit and make key purchases.",
   },
   {
     id: "tabs_intro",
@@ -36,23 +41,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     openTab: "functions",
     highlight: "bottomTabs",
     speechPlacement: "top",
-    text: "The bottom bar is split into tabs. The Functions tab lets you control and order your town and crew in different ways.",
-  },
-  {
-    id: "tabs_store",
-    speaker: "farmer",
-    openTab: "functions",
-    highlight: "bottomTabs",
-    speechPlacement: "top",
-    text: "The Store tab is where you purchase buildings and troops.",
-  },
-  {
-    id: "tabs_facilities",
-    speaker: "farmer",
-    openTab: "functions",
-    highlight: "bottomTabs",
-    speechPlacement: "top",
-    text: "The Clay Ovens tab, Storage tab, and Houses tab let you inspect those facilities directly. The Cards tab is where you access your deck cards and consumable powerup cards.",
+    text: "The bottom bar is split into tabs. This is where most town decisions happen.",
   },
   {
     id: "farm_mode",
@@ -63,7 +52,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     waitFor: { action: "function.mode", mode: "Farm" },
     allowedActions: [{ action: "function.mode", mode: "Farm" }],
     resumeSimulation: true,
-    text: "Start in the Functions tab. Press Farm.",
+    text: "Let's start with farming. Press Farm.",
   },
   {
     id: "farm_plots",
@@ -76,12 +65,12 @@ export const TUTORIAL_STEPS = Object.freeze([
     id: "forager_intro",
     speaker: "forager",
     selectRole: "forager",
-    text: "I'm the Forager. I work outside town, gather resources from parcels, and bring those supplies back home.",
+    text: "Hey, I'm the Forager. If there's something useful outside town, I'm probably already looking for it.",
   },
   {
     id: "forager_supply_line",
     speaker: "forager",
-    text: "That keeps the rest of the town growing.",
+    text: "I work outside town, gather resources from parcels, and bring those supplies back home.",
   },
   {
     id: "forest_contract_slot",
@@ -94,7 +83,8 @@ export const TUTORIAL_STEPS = Object.freeze([
     waitFor: { action: "contractHud.slot", slotId: "E" },
     allowedActions: [{ action: "contractHud.slot", slotId: "E" }],
     resumeSimulation: true,
-    text: "Expansion starts with contracts. Click the East parcel to open its contract page.",
+    tutorialArrow: "eastContractHud",
+    text: "Expansion starts with contracts. Click the East contract button to open the contract page for that side of town.",
   },
   {
     id: "contract_types_intro",
@@ -102,7 +92,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     highlight: "contractForestButton",
     speechPlacement: "contractBottom",
     allowedActions: [{ action: "contractHud.slot", slotId: "E" }],
-    text: "Each contract helps in a different way. Forest gives Wood. Rock gives Stone and some Gold.",
+    text: "Each contract helps in a different way. The Forest contract gives Wood. The Rock contract grants you Stone and some Gold ores for extra money.",
   },
   {
     id: "contract_types_field_market",
@@ -110,7 +100,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     highlight: "contractFarmButton",
     speechPlacement: "contractBottom",
     allowedActions: [{ action: "contractHud.slot", slotId: "E" }],
-    text: "Field contracts supply Seeds and Berries. The Market lets you buy supplies.",
+    text: "Field contracts supply Seeds and Berries. The Market lets you buy supplies when you need something fast.",
   },
   {
     id: "contract_types_pressure",
@@ -118,7 +108,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     highlight: "contractPressureButton",
     speechPlacement: "contractBottom",
     allowedActions: [{ action: "contractHud.slot", slotId: "E" }],
-    text: "Pressure is a combat contract. It lets you fight enemies and rewards you with Money and XP for defeating them.",
+    text: "The Pressure contract is combat-based. You fight enemies there for Money and XP, so make sure you have a fighter in town before buying one.",
   },
   {
     id: "forest_contract_buy",
@@ -149,15 +139,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     openTab: "build",
     setBuildMode: "buildings",
     speechPlacement: "top",
-    text: "I'm the Builder. I turn your resources into structures and keep those structures standing.",
-  },
-  {
-    id: "builder_damage",
-    speaker: "builder",
-    openTab: "build",
-    setBuildMode: "buildings",
-    speechPlacement: "top",
-    text: "That matters when the town takes damage.",
+    text: "Builder here. Give me supplies and a little space, and I'll turn this place into something that lasts.",
   },
   {
     id: "build_house",
@@ -173,7 +155,7 @@ export const TUTORIAL_STEPS = Object.freeze([
       { action: "build.placed", key: "house" },
     ],
     resumeSimulation: true,
-    text: "Place a House first.",
+    text: "Let's place a House first so we can recruit more members.",
   },
   {
     id: "house_info",
@@ -207,7 +189,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     setBuildMode: "buildings",
     highlight: "buildStorageCard",
     speechPlacement: "top",
-    text: "Storage gives you more room to hold what the town brings in. If you cannot hold supplies, the whole town slows down.",
+    text: "Storages give you more room to hold what the town brings in. If your storages are filled to the brim, the whole town slows down.",
   },
   {
     id: "fireman_intro",
@@ -216,7 +198,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     openTab: "functions",
     highlight: "waterButton",
     speechPlacement: "top",
-    text: "I'm the Fireman. I run ovens and produce water for the town.",
+    text: "Fireman reporting in. I keep clean water moving, even when everyone suddenly remembers they're thirsty.",
   },
   {
     id: "water_on",
@@ -231,9 +213,17 @@ export const TUTORIAL_STEPS = Object.freeze([
     text: "Start Water production of 1 Water.",
   },
   {
+    id: "water_cost",
+    speaker: "fireman",
+    openTab: "functions",
+    highlight: "waterButton",
+    speechPlacement: "top",
+    text: "To produce clean drinkable Water, I need 1 Unclean Water fetched from the shore and a piece of Wood to heat the process. Supply me with fuel and something to clean, and I'll handle the rest.",
+  },
+  {
     id: "brawler_intro",
     speaker: "brawler",
-    text: "I'm one of the fighters. I defend the town when raiders show up and help keep your people alive through the night.",
+    text: "Brawler here. Point me at trouble and I'll keep it away from the town.",
   },
   {
     id: "buy_brawler",
@@ -256,27 +246,27 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: "core_loop_defend",
     speaker: "farmer",
-    text: "Your first night is free: no raiders tonight. After that, defend the night, then expand again.",
+    text: "Your first night is free: no raiders tonight. After that, waves of enemies will come for your town every night.",
   },
   {
     id: "town_towers",
     speaker: "farmer",
     forceDetailed: true,
     highlightTownTower: true,
-    text: "One more thing: Town Towers are the heartbeat of your town.",
+    text: "One more thing: Town Towers are the heartbeat of your settlement.",
   },
   {
     id: "town_towers_rewards",
     speaker: "farmer",
     forceDetailed: true,
     highlightTownTower: true,
-    text: "Each one gives you money and 1 expansion permit at dawn, so towns that keep building them usually keep growing.",
+    text: "Each one gives you Money and 1 Growth Permit every day at dawn, so towns that keep building them usually keep growing.",
   },
   {
     id: "finish",
     speaker: "farmer",
     selectRole: "farmer",
     completeOnAdvance: true,
-    text: "Awesome, now you're ready to take on the game. Saving is now enabled.",
+    text: "You're ready to go. Saving is now enabled.",
   },
 ]);

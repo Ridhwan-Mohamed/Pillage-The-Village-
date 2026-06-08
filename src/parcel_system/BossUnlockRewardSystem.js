@@ -1,6 +1,5 @@
 import Phaser from "phaser";
 import { UIDEPTH } from "../constants";
-import { STORE_UNLOCK_KEYS, unlockStoreItem } from "./StoreUnlockSystem";
 import { applyPortraitKeyToSprite, createPlayerPortraitAnimations } from "../players/playerPortraits.js";
 
 const DEFAULT_ACCENT_COLOR = 0xf6c86c;
@@ -8,52 +7,7 @@ const DEFAULT_GLOW_COLOR = 0xffefb1;
 const DEFAULT_PANEL_COLOR = 0x111827;
 const DEFAULT_SUBTEXT_COLOR = "#d7dce9";
 
-const PLACEHOLDER_BOSS_UNLOCKS = {
-  1: {
-    id: "season_1_turret_unlock",
-    title: "Turret Unlocked",
-    description:
-      "North Fort schematics have been added to the store. Builders can now construct a turret after this boss clear.",
-    displayLabel: "Turret",
-    compositeArt: {
-      textureKey: "boss_reward_turret_composite",
-      width: 96,
-      height: 96,
-      parts: [
-        { key: "image7", x: 48, y: 60, scale: 1.15 },
-        { key: "image7a", x: 48, y: 30, scale: 1.15 },
-      ],
-    },
-    accentColor: 0xf4ca67,
-    glowColor: 0xffefb6,
-    panelColor: 0x111a2c,
-    onGrant: (scene) => {
-      unlockStoreItem(STORE_UNLOCK_KEYS.turret, scene);
-    },
-  },
-  2: {
-    id: "season_2_catapult_unlock",
-    title: "Catapult Unlocked",
-    description:
-      "A long-range catapult has been added to the store. Builders can now construct it after this boss clear.",
-    displayLabel: "Catapult",
-    compositeArt: {
-      textureKey: "boss_reward_catapult_composite",
-      width: 96,
-      height: 96,
-      parts: [
-        { key: "catapult_base", x: 48, y: 56, scale: 1.1 },
-        { key: "catapult_top", x: 48, y: 44, scale: 1.1, frame: 1, useSprite: true },
-      ],
-    },
-    accentColor: 0xff9b64,
-    glowColor: 0xffd6aa,
-    panelColor: 0x1a1625,
-    onGrant: (scene) => {
-      unlockStoreItem(STORE_UNLOCK_KEYS.catapult, scene);
-    },
-  },
-};
+const PLACEHOLDER_BOSS_UNLOCKS = Object.freeze({});
 
 function safeDestroy(go) {
   if (!go) return;
@@ -289,22 +243,13 @@ function createArtSlot(
 
 export function getBossUnlockReward(stageIndex, seasonIndex = 1) {
   const season = Math.max(1, Number(seasonIndex) || 1);
-  const stage = Math.max(1, Number(stageIndex) || 1);
   const specificReward = PLACEHOLDER_BOSS_UNLOCKS[season];
 
   if (specificReward) {
     return cloneReward(specificReward);
   }
 
-  return {
-    id: `season_${season}_boss_unlock`,
-    title: "Store Unlock Ready",
-    description: `A placeholder boss unlock for Season ${season} is ready. Final reward art and grant logic can be plugged in without changing the presentation flow.`,
-    imageKey: `boss_unlock_placeholder_s${season}_st${stage}`,
-    accentColor: DEFAULT_ACCENT_COLOR,
-    glowColor: DEFAULT_GLOW_COLOR,
-    panelColor: DEFAULT_PANEL_COLOR,
-  };
+  return null;
 }
 
 export function openBossUnlockRewardPresentation(scene, { reward, onComplete } = {}) {
@@ -455,6 +400,7 @@ export function openBossUnlockRewardPresentation(scene, { reward, onComplete } =
       key: entry.key,
       compositeArt: entry.compositeArt,
       portraitKey: entry.portraitKey,
+      emoji: entry.emoji,
       label: entry.label,
       accentColor,
       panelColor,

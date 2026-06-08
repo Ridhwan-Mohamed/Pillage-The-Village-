@@ -81,7 +81,7 @@ export class Bank {
     this.lightId = VisibilitySystem.addLightSource({ x: cx, y: cy, r: 6, brightness: 2 });
 
     this.sprite.play("bank_closed_idle");
-    this.sprite.setInteractive({ cursor: "pointer" });
+    this.sprite.setInteractive({ useHandCursor: true });
 
     // footprint collider for projectiles / overlaps (matches Tower pattern)
     const w = lenX * SQUARESIZE;

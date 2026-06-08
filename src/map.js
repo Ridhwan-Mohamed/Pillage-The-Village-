@@ -1258,6 +1258,24 @@ export class Map{
             .setVisible(alpha > 0.001);
     }
 
+    static getOuterWaterTileRect(width = null, height = null) {
+        const mapWidth = Math.max(1, Math.floor(Number(width ?? this.grid?.[0]?.length ?? WORLD_DIMENSIONX)));
+        const mapHeight = Math.max(1, Math.floor(Number(height ?? this.grid?.length ?? WORLD_DIMENSIONY)));
+        const tileWidth = Math.max(mapWidth, OUTER_WATER_TILE_DIMENSION);
+        const tileHeight = Math.max(mapHeight, OUTER_WATER_TILE_DIMENSION);
+        const gx0 = Math.floor((mapWidth - tileWidth) / 2);
+        const gy0 = Math.floor((mapHeight - tileHeight) / 2);
+        const gx1 = Math.ceil((mapWidth + tileWidth) / 2);
+        const gy1 = Math.ceil((mapHeight + tileHeight) / 2);
+
+        return {
+            gx0,
+            gy0,
+            tilesW: Math.max(1, gx1 - gx0),
+            tilesH: Math.max(1, gy1 - gy0),
+        };
+    }
+
     static _drawOuterWaterBackdrop(width = null, height = null) {
         width = Math.max(1, Math.floor(Number(width ?? this.grid?.[0]?.length ?? WORLD_DIMENSIONX)));
         height = Math.max(1, Math.floor(Number(height ?? this.grid?.length ?? WORLD_DIMENSIONY)));

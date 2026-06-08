@@ -467,6 +467,20 @@ export class VisibilitySystem {
   static _applyShellPadding(rect) {
     if (!rect) return rect;
 
+    const outerWaterRect = GameMap.getOuterWaterTileRect?.() ?? null;
+    if (outerWaterRect) {
+      const minX = Math.min(rect.gx0, outerWaterRect.gx0);
+      const minY = Math.min(rect.gy0, outerWaterRect.gy0);
+      const maxX = Math.max(rect.gx0 + rect.tilesW, outerWaterRect.gx0 + outerWaterRect.tilesW);
+      const maxY = Math.max(rect.gy0 + rect.tilesH, outerWaterRect.gy0 + outerWaterRect.tilesH);
+      return {
+        gx0: minX,
+        gy0: minY,
+        tilesW: Math.max(1, maxX - minX),
+        tilesH: Math.max(1, maxY - minY),
+      };
+    }
+
     const padTiles = this._getShellPaddingTiles();
     return {
       gx0: rect.gx0 - padTiles,
@@ -502,6 +516,7 @@ export class VisibilitySystem {
         .setOrigin(0, 0)
         .setDepth(this.overviewMode ? (UIDEPTH - 1.1) : (UIDEPTH - 3))
         .setScrollFactor(1, 1);
+      this.viewRT.texture?.setFilter?.(Phaser.Textures.FilterMode.NEAREST);
       this.viewRT.setDisplaySize(tilesW * SQUARESIZE, tilesH * SQUARESIZE);
       this.viewRT.setAlpha(this.overviewMode ? 0.96 : 1);
       if (this.uiCam?.ignore) this.uiCam.ignore(this.viewRT);
@@ -622,16 +637,25 @@ export class VisibilitySystem {
 
     // 3) Draw final darkness from ambient, vision, and lights only.
     const gfx = this.scene.add.graphics();
+    const ambientDark = 1 - Phaser.Math.Clamp(this.ambient, 0, 1);
+    const detailedOuterAmbienceActive =
+      !this.overviewMode &&
+      GameMap.outerWaterLayer?.visible !== false &&
+      GameMap.outerWaterAmbienceOverlay?.visible === true;
+
     for (let ly = 0; ly < tilesH; ly++) {
       const rowOff = ly * tilesW;
       for (let lx = 0; lx < tilesW; lx++) {
         const gx = gx0 + lx;
         const gy = gy0 + ly;
-        if (!inBounds(gx, gy)) continue;
-
         const j  = rowOff + lx;
-        const vis = Math.max(this._fog[j], this._light[j]); // brightness
-        const finalDark = 1 - Phaser.Math.Clamp(vis, 0, 1);
+        const inMapBounds = inBounds(gx, gy);
+
+        if (!inMapBounds && detailedOuterAmbienceActive) continue;
+
+        const finalDark = inMapBounds
+          ? 1 - Phaser.Math.Clamp(Math.max(this._fog[j], this._light[j]), 0, 1)
+          : ambientDark;
         if (finalDark <= 0) continue;
 
         // NOTE: 1x1 grid pixel; RT is scaled to world size

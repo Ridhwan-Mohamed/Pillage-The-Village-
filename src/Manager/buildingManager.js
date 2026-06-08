@@ -2481,7 +2481,7 @@ export class buildingManager{
         const bounds = task.value.sprite.getBounds();
         const icon = this.scene.add.image(bounds.centerX, bounds.centerY, "hammer")
             .setDepth((task.value.sprite.depth ?? BLOCKDEPTH) + 2)
-            .setDisplaySize(18, 18)
+            .setDisplaySize(24, 24)
             .setAlpha(0.95);
 
         task.fixIndicator = icon;

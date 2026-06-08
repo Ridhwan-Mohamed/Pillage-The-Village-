@@ -44,6 +44,9 @@ export class TutorialManager {
     this.uiHighlightTween = null;
     this.worldPulse = null;
     this.worldPulseTween = null;
+    this.tutorialArrow = null;
+    this.tutorialArrowTween = null;
+    this.scheduledHighlightCalls = new Set();
     this.hoveredParcelSlotId = null;
   }
 
@@ -160,6 +163,8 @@ export class TutorialManager {
     const wait = this.waitFor;
     if (!wait || !this._matchesRule(wait, action, payload)) return false;
 
+    this._clearTutorialArrow();
+
     if (action === "build.placed") {
       this._focusPlacedBuild(payload);
     }
@@ -206,13 +211,16 @@ export class TutorialManager {
       this._focusParcel(step.focusParcel);
     }
     if (step.highlightTownTower) {
-      this.scene.time?.delayedCall?.(120, () => this._showTownTowerHighlight());
+      this._scheduleHighlightCall(step, 120, () => this._showTownTowerHighlight());
     }
     if (step.hoverParcel) {
-      this.scene.time?.delayedCall?.(220, () => this._setParcelHover(step.hoverParcel, true));
+      this._scheduleHighlightCall(step, 220, () => this._setParcelHover(step.hoverParcel, true));
     }
     if (step.highlight) {
-      this.scene.time?.delayedCall?.(260, () => this._showUiHighlight(step.highlight));
+      this._scheduleHighlightCall(step, 260, () => this._showUiHighlight(step.highlight));
+    }
+    if (step.tutorialArrow) {
+      this._scheduleHighlightCall(step, 320, () => this._showTutorialArrow(step.tutorialArrow));
     }
 
     this.overlay.showStep(step);
@@ -406,7 +414,7 @@ export class TutorialManager {
         this.overlay.currentStep = this.currentStep;
       }
       this._clearHighlights();
-      this.scene.time?.delayedCall?.(80, () => this._showUiHighlight("contractBuyButton"));
+      this._scheduleHighlightCall(this.currentStep, 80, () => this._showUiHighlight("contractBuyButton"));
     }
   }
 
@@ -497,6 +505,7 @@ export class TutorialManager {
   }
 
   _clearHighlights() {
+    this._clearScheduledHighlightCalls();
     if (this.hoveredParcelSlotId) {
       this._setParcelHover(this.hoveredParcelSlotId, false);
     }
@@ -504,10 +513,26 @@ export class TutorialManager {
     this.uiHighlightTween = null;
     this.uiHighlight?.destroy?.();
     this.uiHighlight = null;
+    this._clearTutorialArrow();
     this.worldPulseTween?.remove?.();
     this.worldPulseTween = null;
     this.worldPulse?.destroy?.(true);
     this.worldPulse = null;
+  }
+
+  _scheduleHighlightCall(step, delay, callback) {
+    const timer = this.scene.time?.delayedCall?.(delay, () => {
+      this.scheduledHighlightCalls.delete(timer);
+      if (!this.active || this.currentStep !== step) return;
+      callback?.();
+    });
+    if (timer) this.scheduledHighlightCalls.add(timer);
+    return timer;
+  }
+
+  _clearScheduledHighlightCalls() {
+    this.scheduledHighlightCalls?.forEach?.((timer) => timer?.remove?.(false));
+    this.scheduledHighlightCalls?.clear?.();
   }
 
   _showUiHighlight(key) {
@@ -537,6 +562,93 @@ export class TutorialManager {
       repeat: -1,
     });
     this.overlay?.relayout?.();
+  }
+
+  _clearTutorialArrow() {
+    this.tutorialArrowTween?.remove?.();
+    this.tutorialArrowTween = null;
+    this.tutorialArrow?.destroy?.(true);
+    this.tutorialArrow = null;
+  }
+
+  _showTutorialArrow(key) {
+    const ui = this.scene.uiScene;
+    if (!ui?.add) return;
+    const rect = this._resolveHighlightRect(key);
+    if (!rect) return;
+
+    this._clearTutorialArrow();
+
+    const targetX = rect.x + rect.width / 2;
+    const targetY = rect.y + rect.height / 2;
+    const pointsRight = targetX >= ui.scale.width * 0.5;
+    const gap = 116;
+    const x = Phaser.Math.Clamp(
+      pointsRight ? rect.x - gap : rect.x + rect.width + gap,
+      84,
+      Math.max(84, ui.scale.width - 84)
+    );
+    const y = Phaser.Math.Clamp(targetY, 96, Math.max(96, ui.scale.height - 104));
+
+    const root = ui.add.container(x, y).setDepth(UIDEPTH + 535).setScrollFactor(0);
+    const g = ui.add.graphics();
+    const label = ui.add.text(-14, 0, "EAST", {
+      fontFamily: "Bungee, Arial, sans-serif",
+      fontSize: "20px",
+      color: "#fff7d6",
+      stroke: "#2a1608",
+      strokeThickness: 5,
+      align: "center",
+    }).setOrigin(0.5);
+
+    g.fillStyle(0x2b1609, 0.30);
+    g.fillEllipse(-2, 6, 158, 70);
+    g.fillStyle(0x7c4a23, 0.98);
+    g.fillRoundedRect(-74, -24, 98, 48, 9);
+    g.beginPath();
+    g.moveTo(18, -34);
+    g.lineTo(82, 0);
+    g.lineTo(18, 34);
+    g.lineTo(18, 22);
+    g.lineTo(-10, 22);
+    g.lineTo(-10, -22);
+    g.lineTo(18, -22);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(4, 0x351909, 0.96);
+    g.strokeRoundedRect(-74, -24, 98, 48, 9);
+    g.beginPath();
+    g.moveTo(18, -34);
+    g.lineTo(82, 0);
+    g.lineTo(18, 34);
+    g.lineTo(18, 22);
+    g.lineTo(-10, 22);
+    g.lineTo(-10, -22);
+    g.lineTo(18, -22);
+    g.closePath();
+    g.strokePath();
+    g.lineStyle(2, 0xd4a256, 0.62);
+    g.lineBetween(-62, -12, -4, -12);
+    g.lineBetween(-66, 10, 8, 10);
+    g.fillStyle(0x271307, 0.88);
+    g.fillCircle(-62, -13, 4);
+    g.fillCircle(-62, 13, 4);
+
+    if (!pointsRight) {
+      root.setScale(-1, 1);
+      label.setScale(-1, 1);
+    }
+
+    root.add([g, label]);
+    this.tutorialArrow = root;
+    this.tutorialArrowTween = ui.tweens.add({
+      targets: root,
+      x: x + (pointsRight ? 12 : -12),
+      duration: 440,
+      ease: "Sine.easeInOut",
+      yoyo: true,
+      repeat: -1,
+    });
   }
 
   getOverlayTargetRect() {
@@ -651,7 +763,7 @@ export class TutorialManager {
       duration: 360,
       ease: "Sine.easeInOut",
       yoyo: true,
-      repeat: 7,
+      repeat: -1,
       onUpdate: () => {
         if (sprite?.active && flash?.active) {
           flash.setPosition(sprite.x, sprite.y);
