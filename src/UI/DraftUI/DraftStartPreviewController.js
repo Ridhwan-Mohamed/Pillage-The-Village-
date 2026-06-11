@@ -9,6 +9,7 @@ import { Map as GameMap } from "../../map.js";
 import { Player } from "../../players/Player.js";
 import { AudioManager } from "../../Manager/AudioManager.js";
 import { DEFAULT_PLAYER_PORTRAIT_KEY } from "../../players/playerPortraits.js";
+import { DEFAULT_LAYOUT_MOVE_RANGE } from "./DraftStartState.js";
 
 
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
@@ -419,6 +420,7 @@ export class DraftStartPreviewController {
     const typeKey = type?.name ?? type?.key ?? type?.id ?? "unknown";
     this.placed.push({
       x: gridX, y: gridY,
+      originX: gridX, originY: gridY,
       typeKey,
       type,
       lenX: type.lenX, lenY: type.lenY,
@@ -853,6 +855,8 @@ export class DraftStartPreviewController {
         x, y,
         lenX: type.lenX,
         lenY: type.lenY,
+        originX: x,
+        originY: y,
         type,
         typeKey: type?.name,     // ✅ add this
         tag: "draftPreview"
@@ -913,7 +917,7 @@ export class DraftStartPreviewController {
   tryMoveSelected(selected, state, newX, newY){
     if (!selected) return { ok:false, reason:"no_selection" };
 
-    const can = this._canMoveAt(selected, newX, newY);
+    const can = this._canMoveAt(selected, newX, newY, state);
     if (!can.ok) return { ok:false, reason: can.reason || "blocked" };
 
     // 1) Update buildingArray entry
@@ -1092,9 +1096,25 @@ export class DraftStartPreviewController {
     this._lastWallBounds = null;
   }
 
-  _canMoveAt(selected, gridX, gridY) {
+  _getLayoutMoveRange(state) {
+    return Math.max(0, Math.floor(Number(state?.layoutMoveRange ?? DEFAULT_LAYOUT_MOVE_RANGE)));
+  }
+
+  _moveDistanceFromOrigin(selected, gridX, gridY) {
+    const originX = Number.isFinite(selected?.originX) ? selected.originX : selected?.x;
+    const originY = Number.isFinite(selected?.originY) ? selected.originY : selected?.y;
+    return Math.abs(gridX - originX) + Math.abs(gridY - originY);
+  }
+
+  _canMoveAt(selected, gridX, gridY, state = null) {
     const t = selected?.type;
     if (!t) return { ok:false, reason:"bad selected" };
+
+    const moveRange = this._getLayoutMoveRange(state);
+    const moveDistance = this._moveDistanceFromOrigin(selected, gridX, gridY);
+    if (moveDistance > moveRange) {
+      return { ok:false, reason:"out of range", distance: moveDistance, range: moveRange };
+    }
 
     // 1) Footprint check, BUT allow overlap with selected’s current footprint
     if (gridX < 0 || gridY < 0 || gridX + t.lenX > this.srcW || gridY + t.lenY > this.srcH) {
@@ -1147,7 +1167,7 @@ export class DraftStartPreviewController {
 
   setMoveHover(selected, state, gridX, gridY) {
 
-    const ok = this._canMoveAt(selected, gridX, gridY).ok;
+    const ok = this._canMoveAt(selected, gridX, gridY, state).ok;
     const moveKey = `${gridX},${gridY}`;
     const changed = gridX !== selected?.x || gridY !== selected?.y;
     if (ok && changed) {

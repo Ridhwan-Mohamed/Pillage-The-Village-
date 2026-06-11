@@ -2,7 +2,7 @@ import { showAlert } from "../constants.js";
 import { formatPermitCostText, getContractPermitCost } from "../permitSystem.js";
 import { getContractMoneyCost } from "../balance/GameBalance.js";
 import { PRESSURE } from "../parcel_system/ParcelConfig.js";
-import { hasStoreUnlock, STORE_UNLOCK_KEYS } from "../parcel_system/StoreUnlockSystem.js";
+import { hasDemoCompleted, hasStoreUnlock, STORE_UNLOCK_KEYS } from "../parcel_system/StoreUnlockSystem.js";
 import {
   getSlotFavorBannerText,
   getSlotFavorConfig,
@@ -871,7 +871,7 @@ export class SlotPanel {
   }
 
   _canAccessMilitia() {
-    return this._isMilitiaUnlocked() && this._getTownLevel() >= 3;
+    return this._isMilitiaUnlocked() && (this._getTownLevel() >= 3 || hasDemoCompleted());
   }
 
   _getMilitiaLockedLabel() {

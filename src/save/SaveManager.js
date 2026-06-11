@@ -66,6 +66,7 @@ export class SaveManager {
 
   static canSaveScene(scene = this.scene) {
     if (!scene || scene._restoringFromSave) return false;
+    if (scene._runSaveDisabled || scene._demoCompleted || scene._demoCompletionInProgress) return false;
     if (scene.tutorialManager?.isBlockingSaves?.()) return false;
     if (!scene.clock || !scene.parcelManager || !scene.towerPressureController) return false;
     if (scene.menu?.active && !scene.parcelSpawnUI) return false;

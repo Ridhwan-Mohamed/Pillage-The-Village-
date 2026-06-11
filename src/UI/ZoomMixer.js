@@ -260,6 +260,137 @@ export class ZoomMixer {
     this.anchorScreen = { x: cam.width * 0.5, y: cam.height * 0.5 };
   }
 
+  captureOverviewState() {
+    const scene = ZoomMixer.scene;
+    const cam = scene?.cameras?.main;
+    const clonePoint = (point) => point ? {
+      x: Number(point.x || 0),
+      y: Number(point.y || 0),
+    } : null;
+    return {
+      mode: this.mode,
+      wasOverview: this.mode === "overview",
+      targetZoom: Number(this.targetZoom || cam?.zoom || this.overviewZoom),
+      camera: {
+        zoom: Number(cam?.zoom || this.targetZoom || this.overviewZoom),
+        scrollX: Number(cam?.scrollX || 0),
+        scrollY: Number(cam?.scrollY || 0),
+      },
+      zoom: Number(cam?.zoom || this.targetZoom || this.overviewZoom),
+      scrollX: Number(cam?.scrollX || 0),
+      scrollY: Number(cam?.scrollY || 0),
+      anchorWorld: clonePoint(this.anchorWorld),
+      anchorScreen: clonePoint(this.anchorScreen),
+      overview: {
+        visible: !!this.overviewImage?.visible,
+        alpha: Number(this.overviewImage?.alpha ?? 0),
+      },
+      mapIcons: {
+        visible: !!ZoomMixer.mapIconContainer?.visible,
+        alpha: Number(ZoomMixer.mapIconContainer?.alpha ?? 0),
+      },
+      detailedWorld: {
+        visible: !!(
+          Map.worldLayer?.visible ||
+          Map.worldStaticLayer?.visible ||
+          Map.graphics?.visible ||
+          Map.outerWaterLayer?.visible
+        ),
+        paused: !!Map._detailedWorldPaused,
+      },
+    };
+  }
+
+  restoreOverviewState(state = null, opts = {}) {
+    if (!state) return;
+    const scene = ZoomMixer.scene;
+    const cam = scene?.cameras?.main;
+    if (!scene || !cam) return;
+
+    const mode = state.mode || (state.wasOverview ? "overview" : "detailed");
+    const cameraState = state.camera || state;
+    const currentZoom = Number(cam.zoom || 0);
+    const targetZoom = Number(this.targetZoom || currentZoom);
+    const explicitZoomIn =
+      state.wasOverview &&
+      !opts?.presentationNeutral &&
+      !opts?.force &&
+      this.mode === "detailed" &&
+      (currentZoom >= this.IN_THRESHOLD || targetZoom >= this.IN_THRESHOLD) &&
+      currentZoom > Number(cameraState.zoom || state.zoom || 0) + 0.04;
+    if (explicitZoomIn) return;
+
+    this._killManagedTweensOf(cam);
+    this._killManagedTweensOf(this.overviewImage);
+    this._killManagedTweensOf(ZoomMixer.mapIconContainer);
+    this.zoomVel.v = 0;
+    this.scrollVel.x = 0;
+    this.scrollVel.y = 0;
+    const restoredCameraZoom = Math.max(0.0001, Number(cameraState.zoom || state.zoom || this.overviewZoom));
+    this.targetZoom = Math.max(0.0001, Number(state.targetZoom || restoredCameraZoom));
+    cam.setZoom?.(restoredCameraZoom);
+    const scrollX = Number(cameraState.scrollX ?? state.scrollX ?? 0);
+    const scrollY = Number(cameraState.scrollY ?? state.scrollY ?? 0);
+    cam.setScroll?.(scrollX, scrollY);
+    cam.scrollX = scrollX;
+    cam.scrollY = scrollY;
+    this.anchorWorld = state.anchorWorld
+      ? { x: Number(state.anchorWorld.x || 0), y: Number(state.anchorWorld.y || 0) }
+      : null;
+    this.anchorScreen = state.anchorScreen
+      ? { x: Number(state.anchorScreen.x || 0), y: Number(state.anchorScreen.y || 0) }
+      : null;
+    if (!this.anchorWorld || !this.anchorScreen) this._syncAnchorToCameraCenter(cam);
+
+    if (mode === "overview") {
+      this.mode = "overview";
+      scene.keyboardSpeed = 30;
+      scene.parcelSpawnUI?.setMode?.("overview");
+      scene.parcelSpawnUI?.setVisible?.(true);
+      VisibilitySystem.setOverviewMode(true);
+
+      const overviewImage = this.ensureOverviewImage();
+      const overviewAlpha = Number.isFinite(Number(state.overview?.alpha))
+        ? Number(state.overview.alpha)
+        : 1;
+      overviewImage?.setVisible?.(true);
+      overviewImage?.setAlpha?.(Math.max(overviewAlpha, 1));
+
+      if (ZoomMixer.mapIconContainer) {
+        const iconAlpha = Number.isFinite(Number(state.mapIcons?.alpha))
+          ? Number(state.mapIcons.alpha)
+          : 1;
+        ZoomMixer.mapIconContainer.setVisible?.(state.mapIcons?.visible !== false);
+        ZoomMixer.mapIconContainer.setAlpha?.(Math.max(iconAlpha, 1));
+      }
+
+      Map.setDetailedWorldVisible?.(false);
+      Map.setDetailedWorldPaused?.(true);
+      scene.events?.emit?.("zoom:mode-changed", "overview", 0);
+    } else {
+      this.mode = "detailed";
+      scene.keyboardSpeed = 10;
+      scene.parcelSpawnUI?.setMode?.("detailed");
+      scene.parcelSpawnUI?.setVisible?.(true);
+      if (Map._detailedWorldDirty || !Map.hasDetailedWorldElements?.()) {
+        Map.reDraw?.();
+      }
+      Map.setDetailedWorldPaused?.(state.detailedWorld?.paused ?? false);
+      Map.setDetailedWorldVisible?.(state.detailedWorld?.visible ?? true);
+      VisibilitySystem.setOverviewMode(false);
+
+      if (this.overviewImage) {
+        this.overviewImage.setAlpha?.(state.overview?.alpha ?? 0);
+        this.overviewImage.setVisible?.(state.overview?.visible ?? false);
+      }
+      if (ZoomMixer.mapIconContainer) {
+        ZoomMixer.mapIconContainer.setAlpha?.(state.mapIcons?.alpha ?? 0);
+        ZoomMixer.mapIconContainer.setVisible?.(state.mapIcons?.visible ?? false);
+      }
+      scene.events?.emit?.("zoom:mode-changed", "detailed", 0);
+    }
+  }
+
   handleResize() {
     const scene = ZoomMixer.scene;
     const cam = scene?.cameras?.main;
@@ -360,7 +491,7 @@ export class ZoomMixer {
       scene.keyboardSpeed = 10;
       scene.parcelSpawnUI?.setMode?.("detailed");
       scene.parcelSpawnUI?.setVisible(true);
-      if (!Map.hasDetailedWorldElements?.()) {
+      if (Map._detailedWorldDirty || !Map.hasDetailedWorldElements?.()) {
         Map.reDraw();
       }
       Map.setDetailedWorldPaused?.(false);
@@ -412,7 +543,7 @@ export class ZoomMixer {
   }
 
 
-  /** Optional keyboard shortcuts (Z/X). */
+  /** Optional keyboard shortcut: Z toggles between detailed and overview zoom. */
   hookKeys(zoomOut = this.overviewZoom, zoomIn = this.detailedZoom) {
     const scene = ZoomMixer.scene;
     const isTyping = () => {
@@ -423,13 +554,9 @@ export class ZoomMixer {
     };
     scene.input.keyboard.on('keydown-Z', () => {
       if (isTyping()) return;
-      this.targetZoom = zoomOut;
-      this.smoothCenterZoomTo(zoomOut);
-    });
-    scene.input.keyboard.on('keydown-X', () => {
-      if (isTyping()) return;
-      this.targetZoom = zoomIn;
-      this.smoothCenterZoomTo(zoomIn);
+      const targetZoom = this.mode === "overview" ? zoomIn : zoomOut;
+      this.targetZoom = targetZoom;
+      this.smoothCenterZoomTo(targetZoom);
     });
   }
 

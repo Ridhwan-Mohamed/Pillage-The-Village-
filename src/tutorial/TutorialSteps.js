@@ -59,7 +59,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     speaker: "farmer",
     waitFor: { action: "farm.planted" },
     resumeSimulation: true,
-    text: "Now place a small farm plot on grass tiles and confirm it. Your Farmers will till it and plant it for you.",
+    text: "Now place a small farm plot on grass tiles and confirm it. Put it near the Storage building if you can: the closer bthe better.",
   },
   {
     id: "forager_intro",
@@ -100,7 +100,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     highlight: "contractFarmButton",
     speechPlacement: "contractBottom",
     allowedActions: [{ action: "contractHud.slot", slotId: "E" }],
-    text: "Field contracts supply Seeds and Berries. The Market lets you buy supplies when you need something fast.",
+    text: "Field contracts supply Seeds for growing more Food, plus Berries for quick Stamina and Health boosts to troops. The Market lets you buy supplies when you need something fast.",
   },
   {
     id: "contract_types_pressure",
@@ -155,7 +155,7 @@ export const TUTORIAL_STEPS = Object.freeze([
       { action: "build.placed", key: "house" },
     ],
     resumeSimulation: true,
-    text: "Let's place a House first so we can recruit more members.",
+    text: "Let's place a House first so we can recruit more members. Try to keep new buildings near the town.",
   },
   {
     id: "house_info",
@@ -180,7 +180,7 @@ export const TUTORIAL_STEPS = Object.freeze([
       { action: "build.placed", key: "storage" },
     ],
     resumeSimulation: true,
-    text: "Now place a Storage building.",
+    text: "Now place a Storage building near the town so your workers have a shorter trip.",
   },
   {
     id: "storage_info",

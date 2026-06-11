@@ -81,6 +81,7 @@ export class ParcelContractInstance {
 
     this.timerEvent = null;
     this.uiTickEvent = null;
+    this.militiaAmmoCheckEvent = null;
     this.expireAt = null;
     this.uiLifecycle = "starting";
 
@@ -380,6 +381,7 @@ export class ParcelContractInstance {
     const minY = this.origin.y;
     const maxX = this.origin.x + PARCEL_SIZE - 1;
     const maxY = this.origin.y + PARCEL_SIZE - 1;
+    let navChanged = false;
 
     for (let gy = minY; gy <= maxY; gy++) {
       for (let gx = minX; gx <= maxX; gx++) {
@@ -390,10 +392,18 @@ export class ParcelContractInstance {
             ? cell.some((val) => TILE_MAP(val) === "water")
             : TILE_MAP(cell) === "water";
         if (!water) continue;
-        if (GameMap.navGrid?.[gy]) GameMap.navGrid[gy][gx] = 1;
-        if (GameMap.enemyNavGrid?.[gy]) GameMap.enemyNavGrid[gy][gx] = 1;
+        if (GameMap.navGrid?.[gy]?.[gx] !== undefined) {
+          navChanged = navChanged || GameMap.navGrid[gy][gx] !== 1;
+          GameMap.navGrid[gy][gx] = 1;
+        }
+        if (GameMap.enemyNavGrid?.[gy]?.[gx] !== undefined) {
+          navChanged = navChanged || GameMap.enemyNavGrid[gy][gx] !== 1;
+          GameMap.enemyNavGrid[gy][gx] = 1;
+        }
       }
     }
+
+    if (navChanged) GameMap.bumpNavGridRevision?.("parcel_water_walkable");
   }
 
   _paintMilitiaIslands() {
@@ -460,8 +470,16 @@ export class ParcelContractInstance {
       this.map.grid[gy][gx] = val;
     }
 
-    if (this.map.navGrid?.[gy]) this.map.navGrid[gy][gx] = 1;
-    if (this.map.enemyNavGrid?.[gy]) this.map.enemyNavGrid[gy][gx] = 1;
+    let navChanged = false;
+    if (this.map.navGrid?.[gy]?.[gx] !== undefined) {
+      navChanged = navChanged || this.map.navGrid[gy][gx] !== 1;
+      this.map.navGrid[gy][gx] = 1;
+    }
+    if (this.map.enemyNavGrid?.[gy]?.[gx] !== undefined) {
+      navChanged = navChanged || this.map.enemyNavGrid[gy][gx] !== 1;
+      this.map.enemyNavGrid[gy][gx] = 1;
+    }
+    if (navChanged) this.map.bumpNavGridRevision?.("militia_floor_nav_change");
 
     this.map._refreshRenderCacheAround?.(gx, gy);
     this.map.drawGridValue?.(gx, gy);
@@ -482,32 +500,95 @@ export class ParcelContractInstance {
     this._setFloorTileValue(island.x + 1, island.y + 1, corners.bottomRight);
   }
 
-  _placeMilitiaDefense(kind, gx, gy) {
+  _placeMilitiaDefense(kind, gx, gy, snapshot = null) {
     const tileType = kind === "catapult" ? TILE_TYPES.catapult : TILE_TYPES.turret;
     const obj = GameMap.handleLoadNonSpread(gx, gy, tileType);
     if (!obj) return null;
 
+    const defaultMaxAmmo = kind === "catapult" ? 3 : 5;
+    const maxAmmo = Number.isFinite(Number(snapshot?.maxAmmo))
+      ? Math.max(0, Math.floor(Number(snapshot.maxAmmo)))
+      : defaultMaxAmmo;
+    const ammoRemaining = Number.isFinite(Number(snapshot?.ammoRemaining ?? snapshot?.ammo))
+      ? Math.max(0, Math.floor(Number(snapshot.ammoRemaining ?? snapshot.ammo)))
+      : maxAmmo;
+
     obj.contractId = this.id;
     obj.slotId = this.slotId;
     obj.isTemporaryMilitia = true;
-    obj.maxAmmo = kind === "catapult" ? 3 : 5;
-    obj.ammoRemaining = obj.maxAmmo;
+    obj.maxAmmo = maxAmmo;
+    obj.ammoRemaining = Math.min(ammoRemaining, maxAmmo);
+    if (Number.isFinite(Number(snapshot?.maxHealth))) {
+      obj.maxHealth = Math.max(1, Number(snapshot.maxHealth));
+    }
+    if (Number.isFinite(Number(snapshot?.health))) {
+      obj.health = Math.max(0, Number(snapshot.health));
+    }
+    obj.onAmmoStateChanged = () => this._checkMilitiaDefensesUsable("out_of_ammo");
     obj.updateHealthBar?.();
     this.placedObjects.push(obj);
     return obj;
   }
 
-  _spawnMilitiaFormation() {
+  _spawnMilitiaFormation(savedDefenses = null) {
     const layout = Array.isArray(this.militiaConfig?.layout) && this.militiaConfig.layout.length === 3
       ? this.militiaConfig.layout
       : ["turret", "turret", "turret"];
+    const snapshots = Array.isArray(savedDefenses) ? savedDefenses : [];
 
     const islands = this._paintMilitiaIslands();
 
     for (let i = 0; i < Math.min(3, islands.length); i++) {
       const island = islands[i];
-      this._placeMilitiaDefense(layout[i], island.x, island.y);
+      const snapshot = snapshots[i] || null;
+      if (snapshot?.destroyed || snapshot?.active === false) continue;
+      const kind = snapshot?.kind === "catapult" || snapshot?.kind === "turret"
+        ? snapshot.kind
+        : layout[i];
+      this._placeMilitiaDefense(kind, island.x, island.y, snapshot);
     }
+  }
+
+  _militiaDefenses() {
+    return (this.placedObjects || []).filter((obj) => (
+      obj?.contractId === this.id &&
+      (
+        obj.isTemporaryMilitia ||
+        obj.tileType?.name === TILE_TYPES.turret.name ||
+        obj.tileType?.name === TILE_TYPES.catapult.name
+      )
+    ));
+  }
+
+  _isMilitiaDefenseUnusable(obj) {
+    if (!obj || obj.active === false || obj._destroyed) return true;
+    const hasFiniteAmmo = Number.isFinite(Number(obj.maxAmmo)) && Number.isFinite(Number(obj.ammoRemaining));
+    return hasFiniteAmmo && Number(obj.ammoRemaining) <= 0;
+  }
+
+  _checkMilitiaDefensesUsable(reason = "out_of_ammo") {
+    if (this._completed || this.type !== "MILITIA") return false;
+    const defenses = this._militiaDefenses();
+    const allUnusable = defenses.length === 0 || defenses.every((obj) => this._isMilitiaDefenseUnusable(obj));
+    if (!allUnusable) return false;
+    this.complete(reason || "out_of_ammo");
+    return true;
+  }
+
+  _startMilitiaDefenseMonitor() {
+    if (this.type !== "MILITIA") return;
+    this._stopMilitiaDefenseMonitor();
+    this.militiaAmmoCheckEvent = this.scene?.time?.addEvent?.({
+      delay: 120,
+      loop: true,
+      callback: () => this._checkMilitiaDefensesUsable("out_of_ammo"),
+    }) ?? null;
+    this._checkMilitiaDefensesUsable("out_of_ammo");
+  }
+
+  _stopMilitiaDefenseMonitor() {
+    this.militiaAmmoCheckEvent?.remove?.(false);
+    this.militiaAmmoCheckEvent = null;
   }
 
   getParcelBounds() {
@@ -732,7 +813,11 @@ export class ParcelContractInstance {
       }
     }
 
-    return { navGrid, enemyNavGrid };
+    return {
+      navGrid,
+      enemyNavGrid,
+      navGridRevision: GameMap.getNavGridRevision?.() ?? 0,
+    };
   }
 
   _buildPressureTerrainPlan() {
@@ -784,10 +869,15 @@ export class ParcelContractInstance {
       }
     }
 
-    return { navGrid, enemyNavGrid };
+    return {
+      navGrid,
+      enemyNavGrid,
+      navGridRevision: GameMap.getNavGridRevision?.() ?? 0,
+    };
   }
 
   _applyTerrainPlan(terrainPlan, settings) {
+    let navChanged = false;
     for (const cell of terrainPlan.cells) {
       const def = TILE_TYPES[cell.tileType];
       if (!def || !this.map.grid?.[cell.y] || this.map.grid[cell.y][cell.x] == null) continue;
@@ -795,9 +885,17 @@ export class ParcelContractInstance {
 
       const walkableWater = cell.tileType === "water" && settings.waterWalkable === true;
       const blocks = cell.tileType === "water" && !walkableWater;
-      if (this.map.navGrid?.[cell.y]) this.map.navGrid[cell.y][cell.x] = blocks ? 0 : 1;
-      if (this.map.enemyNavGrid?.[cell.y]) this.map.enemyNavGrid[cell.y][cell.x] = blocks ? 0 : 1;
+      const nextNav = blocks ? 0 : 1;
+      if (this.map.navGrid?.[cell.y]?.[cell.x] !== undefined) {
+        navChanged = navChanged || this.map.navGrid[cell.y][cell.x] !== nextNav;
+        this.map.navGrid[cell.y][cell.x] = nextNav;
+      }
+      if (this.map.enemyNavGrid?.[cell.y]?.[cell.x] !== undefined) {
+        navChanged = navChanged || this.map.enemyNavGrid[cell.y][cell.x] !== nextNav;
+        this.map.enemyNavGrid[cell.y][cell.x] = nextNav;
+      }
     }
+    if (navChanged) this.map.bumpNavGridRevision?.("parcel_terrain_nav_change");
 
     this.map.refreshTerrainShapesInRect?.(this.origin.x, this.origin.y, PARCEL_SIZE, PARCEL_SIZE, 1);
   }
@@ -927,19 +1025,31 @@ export class ParcelContractInstance {
       if (enemyNavGrid[cell.y]) enemyNavGrid[cell.y][cell.x] = 0;
     }
 
-    return { navGrid, enemyNavGrid };
+    return {
+      navGrid,
+      enemyNavGrid,
+      navGridRevision: GameMap.getNavGridRevision?.() ?? 0,
+    };
   }
 
   _applyWaterRemovalPlan(removalPlan) {
     const waterVal = TILE_TYPES.water?.interior ?? TILE_TYPES.water?.grid;
     if (waterVal == null) return;
 
+    let navChanged = false;
     for (const cell of removalPlan.cells) {
       if (!this.map.grid?.[cell.y] || this.map.grid[cell.y][cell.x] == null) continue;
       this.map.grid[cell.y][cell.x] = waterVal;
-      if (this.map.navGrid?.[cell.y]) this.map.navGrid[cell.y][cell.x] = 0;
-      if (this.map.enemyNavGrid?.[cell.y]) this.map.enemyNavGrid[cell.y][cell.x] = 0;
+      if (this.map.navGrid?.[cell.y]?.[cell.x] !== undefined) {
+        navChanged = navChanged || this.map.navGrid[cell.y][cell.x] !== 0;
+        this.map.navGrid[cell.y][cell.x] = 0;
+      }
+      if (this.map.enemyNavGrid?.[cell.y]?.[cell.x] !== undefined) {
+        navChanged = navChanged || this.map.enemyNavGrid[cell.y][cell.x] !== 0;
+        this.map.enemyNavGrid[cell.y][cell.x] = 0;
+      }
     }
+    if (navChanged) this.map.bumpNavGridRevision?.("parcel_removal_nav_change");
 
     this.map.refreshTerrainShapesInRect?.(this.origin.x, this.origin.y, PARCEL_SIZE, PARCEL_SIZE, 1);
   }
@@ -1094,6 +1204,7 @@ export class ParcelContractInstance {
       const navResult = await navPromise;
       reveal.stopPulse();
 
+      const commitBaseRevision = GameMap.getNavGridRevision?.() ?? 0;
       this._spawnCommitted = true;
       this._applyTerrainPlan(terrainPlan, settings);
       if (settings.nodeDefs?.length) {
@@ -1114,6 +1225,8 @@ export class ParcelContractInstance {
         enemyPolys: navResult.enemyPolys,
         navGrid: futureNav.navGrid,
         enemyNavGrid: futureNav.enemyNavGrid,
+        navGridRevision: navResult.navGridRevision ?? futureNav.navGridRevision,
+        commitBaseRevision,
         bounds: this.getParcelBounds?.(),
         refreshOpts,
       }));
@@ -1190,6 +1303,7 @@ export class ParcelContractInstance {
       const navResult = await navPromise;
       reveal.stopPulse();
 
+      const commitBaseRevision = GameMap.getNavGridRevision?.() ?? 0;
       this._spawnCommitted = true;
       this._applyTerrainPlan(terrainPlan, { waterWalkable: false });
       this._applyPressureSpawnerPlan(pressurePlan);
@@ -1206,6 +1320,8 @@ export class ParcelContractInstance {
         enemyPolys: navResult.enemyPolys,
         navGrid: futureNav.navGrid,
         enemyNavGrid: futureNav.enemyNavGrid,
+        navGridRevision: navResult.navGridRevision ?? futureNav.navGridRevision,
+        commitBaseRevision,
         bounds: this.getParcelBounds?.(),
         refreshOpts,
       }));
@@ -1250,6 +1366,7 @@ export class ParcelContractInstance {
       this._startUITick();
       this.timerEvent = this.scene.time.delayedCall(ms, () => this.complete("timeout"), null, this);
       this._setHudLifecycle("active");
+      this._startMilitiaDefenseMonitor();
       return;
     }
 
@@ -1343,6 +1460,10 @@ export class ParcelContractInstance {
           enemyTypeLabel: obj.enemyTypeLabel ?? null,
           modifierKey: obj.modifierKey ?? null,
           modifierLabel: obj.modifierLabel ?? null,
+          maxAmmo: Number.isFinite(Number(obj.maxAmmo)) ? Number(obj.maxAmmo) : null,
+          ammoRemaining: Number.isFinite(Number(obj.ammoRemaining)) ? Number(obj.ammoRemaining) : null,
+          destroyed: !!obj._destroyed,
+          isTemporaryMilitia: !!obj.isTemporaryMilitia,
         })),
     };
   }
@@ -1460,11 +1581,15 @@ export class ParcelContractInstance {
     }
 
     if (this.type === "MILITIA") {
-      this._spawnMilitiaFormation();
+      const militiaSnapshots = Array.isArray(saved.placedObjects)
+        ? saved.placedObjects.filter((entry) => entry?.kind === "turret" || entry?.kind === "catapult")
+        : null;
+      this._spawnMilitiaFormation(militiaSnapshots);
       this._startUITick();
       const remaining = Math.max(0, Number(this.expireAt || 0) - this._getSimulationNowMs());
       this.timerEvent = this.scene.time.delayedCall(remaining, () => this.complete("timeout"), null, this);
       this._setHudLifecycle("active");
+      this._startMilitiaDefenseMonitor();
       return;
     }
 
@@ -1548,6 +1673,7 @@ export class ParcelContractInstance {
     }
 
     this._stopUITick();
+    this._stopMilitiaDefenseMonitor();
 
     this._disablePlacedObjectInteractions();
 
@@ -1612,6 +1738,7 @@ export class ParcelContractInstance {
       const navResult = await navPromise;
       reveal.stopPulse();
 
+      const commitBaseRevision = GameMap.getNavGridRevision?.() ?? 0;
       this._removalCommitted = true;
       this._applyWaterRemovalPlan(removalPlan);
       this._destroyPlacedObjectsForRemoval();
@@ -1629,6 +1756,8 @@ export class ParcelContractInstance {
         enemyPolys: navResult.enemyPolys,
         navGrid: futureNav.navGrid,
         enemyNavGrid: futureNav.enemyNavGrid,
+        navGridRevision: navResult.navGridRevision ?? futureNav.navGridRevision,
+        commitBaseRevision,
         bounds: this.getParcelBounds?.(),
         refreshOpts,
       }));

@@ -27,8 +27,8 @@ export class StorageBuilding {
         this.tileType = item;
         this.sprite = Map.addToWorldStatic(
             StorageBuilding.scene.add.sprite(
-                (x + Math.floor(item.lenX/2)) * SQUARESIZE,
-                (y + Math.floor(item.lenY/2)) * SQUARESIZE,
+                x * SQUARESIZE + ((item?.lenX ?? 1) * SQUARESIZE) / 2,
+                y * SQUARESIZE + ((item?.lenY ?? 1) * SQUARESIZE) / 2,
                 'storage'
             ).setDepth(BLOCKDEPTH)
         );
@@ -61,8 +61,8 @@ export class StorageBuilding {
         Map.addBlockItem(x,y,item)
 
         if(teamNumber == 1){
-            const cx = x + Math.floor(item.lenX/2);
-            const cy = y + Math.floor(item.lenY/2);
+            const cx = x + (item.lenX ?? 1) / 2;
+            const cy = y + (item.lenY ?? 1) / 2;
             // Vision bubble: keep storage area slightly visible
             this.visionId = VisibilitySystem.addVisionBubble({ x: cx, y: cy, r: 6, boost: 0.10 });
             // Utility light: a bit dimmer than oven

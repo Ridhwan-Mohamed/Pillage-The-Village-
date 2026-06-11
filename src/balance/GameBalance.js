@@ -231,7 +231,8 @@ export function getNightHordeSettings(hordeIndex = 1) {
   const laneCount = NIGHT_HORDE_LANES[cappedIndex - 1];
   const hunterRatio = index >= 2 ? Math.min(0.42, 0.16 + ((index - 2) * 0.04)) : 0;
   const bomberRatio = index >= 3 ? Math.min(0.28, 0.08 + ((index - 3) * 0.04)) : 0;
-  return { totalEnemies, laneCount, hunterRatio, bomberRatio };
+  const guaranteedBomberCount = index === 4 ? 1 : index === 5 ? 2 : 0;
+  return { totalEnemies, laneCount, hunterRatio, bomberRatio, guaranteedBomberCount };
 }
 
 export function distributeAcrossLanes(totalEnemies = 0, laneCount = 1) {

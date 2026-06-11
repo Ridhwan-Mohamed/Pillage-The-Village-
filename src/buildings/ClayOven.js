@@ -45,8 +45,8 @@ export class ClayOven {
         this.tileType = item;
         this.sprite = Map.addToWorldStatic(
             ClayOven.scene.add.sprite(
-                (x + Math.floor(item.lenX/2)) * SQUARESIZE,
-                (y + Math.floor(item.lenY/2)) * SQUARESIZE,
+                x * SQUARESIZE + ((item?.lenX ?? 1) * SQUARESIZE) / 2,
+                y * SQUARESIZE + ((item?.lenY ?? 1) * SQUARESIZE) / 2,
                 'clayOven'
             ).setDepth(BLOCKDEPTH)
         )
@@ -71,8 +71,8 @@ export class ClayOven {
         }
 
         if(this.teamNumber === 1){
-            const cx = x + Math.floor(item.lenX/2);
-            const cy = y + Math.floor(item.lenY/2);
+            const cx = x + (item.lenX ?? 1) / 2;
+            const cy = y + (item.lenY ?? 1) / 2;
             // Vision bubble: small boost over ambient
             this.visionId = VisibilitySystem.addVisionBubble({ x: cx, y: cy, r: 6, boost: 0.15 });
             // Warm light around oven

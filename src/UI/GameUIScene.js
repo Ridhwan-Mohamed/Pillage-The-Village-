@@ -4532,6 +4532,10 @@ export class GameUIScene extends Phaser.Scene {
     const root = this.add.container(0, 0).setDepth((UIDEPTH ?? 2000) + 4200).setScrollFactor(0);
     const destroyers = [];
     let completed = false;
+    const stopInputEvent = (...args) => {
+      const event = args.find((arg) => arg && typeof arg.stopPropagation === "function");
+      event?.stopPropagation?.();
+    };
 
     const cleanup = () => {
       if (!this._townXpRewardPresentation) return;
@@ -4548,6 +4552,9 @@ export class GameUIScene extends Phaser.Scene {
       .setOrigin(0)
       .setInteractive({ useHandCursor: false })
       .setScrollFactor(0);
+    ["pointerdown", "pointerup", "pointermove", "pointerover", "pointerout"].forEach((eventName) => {
+      shade.on(eventName, stopInputEvent);
+    });
     const bloomA = this.add.circle(cam.width * 0.24, cam.height * 0.26, 210, 0x6dd3f5, 0.10).setScrollFactor(0);
     const bloomB = this.add.circle(cam.width * 0.78, cam.height * 0.66, 250, 0xfff0c9, 0.10).setScrollFactor(0);
 
@@ -4814,7 +4821,8 @@ export class GameUIScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
 
       drawCard(false);
-      hit.on("pointerover", () => {
+      hit.on("pointerover", (...args) => {
+        stopInputEvent(...args);
         drawCard(true);
         visual.hoverIn?.forEach((fn) => fn?.());
         this.tweens.add({
@@ -4824,7 +4832,8 @@ export class GameUIScene extends Phaser.Scene {
           ease: "Quad.Out",
         });
       });
-      hit.on("pointerout", () => {
+      hit.on("pointerout", (...args) => {
+        stopInputEvent(...args);
         drawCard(false);
         visual.hoverOut?.forEach((fn) => fn?.());
         this.tweens.add({
@@ -4840,7 +4849,10 @@ export class GameUIScene extends Phaser.Scene {
         onSelect: visual.onSelect,
         selectDelayMs: visual.selectDelayMs,
       };
-      hit.on("pointerdown", () => chooseOption(option, optionEntry));
+      hit.on("pointerdown", (...args) => {
+        stopInputEvent(...args);
+        chooseOption(option, optionEntry);
+      });
 
       card.add([
         shadow,

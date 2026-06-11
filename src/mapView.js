@@ -93,7 +93,14 @@ import { OverviewShoreWaves } from './UI/OverviewShoreWaves.js';
 import { OrderRunner } from './orders/OrderRunner.js';
 import { getBossUnlockReward, openBossUnlockRewardPresentation } from './parcel_system/BossUnlockRewardSystem.js';
 import { getHordeUnlockReward } from './parcel_system/HordeUnlockTrack.js';
-import { hasStoreUnlock, STORE_UNLOCK_KEYS, unlockStoreItem } from './parcel_system/StoreUnlockSystem.js';
+import {
+    DEMO_COMPLETION_STORE_UNLOCK_LABELS,
+    grantDemoCompletionStoreUnlocks,
+    hasStoreUnlock,
+    setDemoCompleted,
+    STORE_UNLOCK_KEYS,
+    unlockStoreItem,
+} from './parcel_system/StoreUnlockSystem.js';
 import { createPlayerPortraitAnimations, getPlayerPortraitKey, preloadPlayerPortraits } from './players/playerPortraits.js';
 import { getHordeModifierForIndex } from './parcel_system/HordeModifiers.js';
 import { addCardToHand, getCardHand } from './UI/Powerups.js';
@@ -127,13 +134,6 @@ const RUN_TROOP_UNLOCK_KEYS = new Set([
     STORE_UNLOCK_KEYS.blademaster,
     STORE_UNLOCK_KEYS.gunslinger,
 ]);
-const DEMO_COMPLETION_STORE_UNLOCK_LABELS = Object.freeze({
-    [STORE_UNLOCK_KEYS.blademaster]: "Blademaster",
-    [STORE_UNLOCK_KEYS.gunslinger]: "Gunslinger",
-    [STORE_UNLOCK_KEYS.stoneWall]: "Stone Walls",
-    [STORE_UNLOCK_KEYS.militiaParcel]: "Militia Parcels",
-});
-const DEMO_COMPLETION_STORE_UNLOCK_KEYS = Object.freeze(Object.keys(DEMO_COMPLETION_STORE_UNLOCK_LABELS));
 const TOWN_XP_TEAM_ID = "1";
 const TOWN_XP_COLORS = Object.freeze({
     mint: 0x93f5d7,
@@ -541,6 +541,13 @@ export class mapView extends Phaser.Scene {
         this.foragerRouteHoverCardLabel = null;
         this.foragerRouteHoverCardNode = null;
         this.foragerRouteHoverCardSize = { width: 0, height: 0 };
+        this.foragerRouteInstructionResizeTracked = false;
+        this._overviewForagerRouteHoverNode = null;
+        this._overviewForagerRouteHoverType = null;
+        this.overviewPlacementGraphics = null;
+        this.overviewConstructionGraphics = null;
+        this.overviewConstructionLabels = new Map();
+        this._overviewConstructionLastDrawAt = 0;
         this.cropHoverCard = null;
         this.cropHoverCardBg = null;
         this.cropHoverCardIcon = null;
@@ -2255,10 +2262,13 @@ export class mapView extends Phaser.Scene {
 
         const snapshot = this.getTownXpSnapshot();
         const options = this._buildTownXpRewardOptions(snapshot.level);
+        const overviewState = this.zoomMixer?.captureOverviewState?.() ?? null;
+        const restoreOverviewState = () => this.zoomMixer?.restoreOverviewState?.(overviewState, { presentationNeutral: true });
 
         this.clock.paused = true;
         this.applySimulationSpeed(true);
         this._movementLocked = true;
+        restoreOverviewState();
 
         this._activeTownXpRewardUI?.destroy?.();
         this._activeTownXpRewardUI = this.uiScene.showTownXpRewardPresentation({
@@ -2269,6 +2279,7 @@ export class mapView extends Phaser.Scene {
                 try {
                     selection?.grant?.();
                 } finally {
+                    restoreOverviewState();
                     state.pendingLevelRewards = Math.max(0, Number(state.pendingLevelRewards || 0) - 1);
                     state.rewardReadyAt = Number(this.time?.now || 0) + 140;
                     this._activeTownXpRewardUI = null;
@@ -2282,6 +2293,7 @@ export class mapView extends Phaser.Scene {
                 }
             },
             onCancel: () => {
+                restoreOverviewState();
                 this._activeTownXpRewardUI = null;
                 this._movementLocked = false;
                 if (!this._townTowerLossInProgress && !this._restartToMainMenuInProgress) {
@@ -2290,6 +2302,7 @@ export class mapView extends Phaser.Scene {
                 }
             },
         });
+        restoreOverviewState();
 
         return true;
     }
@@ -2668,14 +2681,8 @@ export class mapView extends Phaser.Scene {
     }
 
     _grantDemoCompletionStoreUnlocks() {
-        const unlockedLabels = [];
-        for (const key of DEMO_COMPLETION_STORE_UNLOCK_KEYS) {
-            const changed = unlockStoreItem(key, null);
-            if (changed) {
-                unlockedLabels.push(DEMO_COMPLETION_STORE_UNLOCK_LABELS[key] || key);
-            }
-        }
-        return unlockedLabels;
+        setDemoCompleted(true, this);
+        return grantDemoCompletionStoreUnlocks(this);
     }
 
     _buildDemoCompletionSummary() {
@@ -2686,7 +2693,7 @@ export class mapView extends Phaser.Scene {
             ...summary,
             badgeLabel: "DEMO COMPLETE",
             title: "The Shocker Has Fallen",
-            subtitle: "Thanks for playing the demo. Your town broke the storm, and the remaining demo store roster is now permanently unlocked.",
+            subtitle: "Demo complete. New runs now start with Blademaster, Gunslinger, Stone Walls, and Militia Parcels unlocked.",
             troopUnlockLabels: unlockLabels,
             unlockHeaderLabel: "Permanent Store Unlocks",
             emptyUnlockHeaderLabel: "Permanent Store Unlocks: Already Claimed",
@@ -2711,6 +2718,8 @@ export class mapView extends Phaser.Scene {
         this._activeShockerBoss = null;
         this._movementLocked = true;
         this.stageCompleteLock = true;
+        this._demoCompleted = true;
+        this._runSaveDisabled = true;
         StageState.endlessMode = false;
         this._syncShockerBossUi();
 
@@ -2794,6 +2803,45 @@ export class mapView extends Phaser.Scene {
         };
     }
 
+    _buildNightHordeEnemySequence(totalEnemies = 0, settings = {}) {
+        const total = Math.max(0, Math.floor(Number(totalEnemies || 0)));
+        const guaranteedBombers = Math.min(
+            total,
+            Math.max(0, Math.floor(Number(settings.guaranteedBomberCount || 0)))
+        );
+        const sequence = Array.from({ length: total }, (_, sequenceIndex) =>
+            pickScaledEnemyType({
+                hunterRatio: settings.hunterRatio,
+                bomberRatio: guaranteedBombers > 0 ? 0 : settings.bomberRatio,
+                sequenceIndex,
+            })
+        );
+
+        if (guaranteedBombers <= 0) return sequence;
+
+        const used = new Set();
+        const chooseSlot = (target) => {
+            const clampedTarget = Math.max(0, Math.min(total - 1, target));
+            for (let offset = 0; offset < total; offset++) {
+                const left = clampedTarget - offset;
+                if (left >= 0 && !used.has(left)) return left;
+                const right = clampedTarget + offset;
+                if (right < total && !used.has(right)) return right;
+            }
+            return null;
+        };
+
+        for (let index = 0; index < guaranteedBombers; index++) {
+            const target = Math.round(((index + 1) * total) / (guaranteedBombers + 1) - 0.5);
+            const slot = chooseSlot(target);
+            if (slot == null) continue;
+            sequence[slot] = "bomber";
+            used.add(slot);
+        }
+
+        return sequence;
+    }
+
     _buildNightHordePlan(hordeIndex = this.getCurrentHordeIndex()) {
         const horde = Math.max(1, Number(hordeIndex || 1));
         const settings = getNightHordeSettings(horde);
@@ -2807,8 +2855,11 @@ export class mapView extends Phaser.Scene {
             return this._estimateNightLaneDetails(edgeKey, laneDifficulty, horde, modifier, laneEnemyCounts[idx]);
         });
         const totalEnemies = laneDetails.reduce((sum, lane) => sum + lane.enemies, 0);
+        const enemySequence = this._buildNightHordeEnemySequence(totalEnemies, settings);
         const includesHunters = laneDetails.some((lane) => Number(lane.hunterRatio || 0) > 0);
-        const includesBombers = laneDetails.some((lane) => Number(lane.bomberRatio || 0) > 0);
+        const includesBombers =
+            enemySequence.includes("bomber") ||
+            laneDetails.some((lane) => Number(lane.bomberRatio || 0) > 0);
         const enemyLabelParts = ["raider"];
         if (includesHunters) enemyLabelParts.push("hunter");
         if (includesBombers) enemyLabelParts.push("bomber");
@@ -2822,6 +2873,8 @@ export class mapView extends Phaser.Scene {
             enemyLabel: buildEnemyTypeLabel(enemyLabelParts) || this._getNightHordeEnemyLabel(modifier),
             laneDetails,
             totalEnemies,
+            enemySequence,
+            guaranteedBomberCount: Math.max(0, Math.floor(Number(settings.guaranteedBomberCount || 0))),
         };
     }
 
@@ -3200,6 +3253,9 @@ export class mapView extends Phaser.Scene {
     restartToMainMenu({ hostScene } = {}) {
         if (this._restartToMainMenuInProgress) return;
         this._restartToMainMenuInProgress = true;
+        if (this._runSaveDisabled || this._demoCompleted || this._demoCompletionInProgress) {
+            SaveManager.clearRunSave();
+        }
         this.setSimulationPause?.("restart_to_main_menu", true);
         MainMenu.queueRestartReveal?.({
             color: 0x64b9ff,
@@ -3269,6 +3325,9 @@ export class mapView extends Phaser.Scene {
                     1
                 ).setOrigin(0).setScrollFactor(0).setDepth(fadeDepth + 10);
                 this._restartCarryCover = carryCover;
+                if (this._runSaveDisabled || this._demoCompleted || this._demoCompletionInProgress) {
+                    SaveManager.clearRunSave();
+                }
                 if (this.scene.isActive('GameUIScene')) {
                     const liveUiScene = this.scene.get('GameUIScene');
                     liveUiScene?._destroyTownLossPresentation?.();
@@ -3310,6 +3369,9 @@ export class mapView extends Phaser.Scene {
         this.startButton = null;
         this.continueButton?.destroy?.();
         this.continueButton = null;
+        this.itchButton = null;
+        this.crownButton = null;
+        this.versionText = null;
         this.menuPreview?.destroy?.();
         this.menuPreview = null;
         this._menuRevealFx?.destroy?.(true);
@@ -3323,6 +3385,9 @@ export class mapView extends Phaser.Scene {
         this.farmInstrSeedCount = null;
         this.farmInstrSeedIcon = null;
         this.farmInstrRight = null;
+        this._clearOverviewForagerRouteHover();
+        this._clearOverviewPlacementPreview();
+        this._clearOverviewConstructionOverlay({ destroyLabels: true });
         this.farmHover?.destroy?.();
         this.farmHover = null;
         this._teamTownIcon?.destroyWithLabel?.();
@@ -3404,15 +3469,18 @@ export class mapView extends Phaser.Scene {
         if (!active?.laneDetails?.length) return [];
 
         const events = [];
+        const enemySequence = Array.isArray(active.enemySequence) ? active.enemySequence : [];
+        let globalSequenceIndex = 0;
         active.laneDetails.forEach((lane, laneIndex) => {
             const intervalMs = Math.max(350, Number(lane.spawnIntervalMs || 1500));
             const initialDelay = Phaser.Math.Between(0, Math.max(400, Math.round(intervalMs * 0.35)));
             for (let enemyIndex = 0; enemyIndex < Math.max(1, Number(lane.enemies || lane.enemiesPerSpawner || 1)); enemyIndex++) {
                 const delay = Math.max(0, initialDelay + laneIndex * 180 + enemyIndex * intervalMs);
-                const enemyType = pickScaledEnemyType({
+                const sequenceIndex = globalSequenceIndex++;
+                const enemyType = enemySequence[sequenceIndex] || pickScaledEnemyType({
                     hunterRatio: lane.hunterRatio,
                     bomberRatio: lane.bomberRatio,
-                    sequenceIndex: enemyIndex + laneIndex,
+                    sequenceIndex,
                 });
                 events.push(this.time.delayedCall(delay, () => {
                     this._spawnNightlyHordeTroop(active, lane, enemyType);
@@ -3440,6 +3508,8 @@ export class mapView extends Phaser.Scene {
             modifier: plan.modifier ?? null,
             enemyLabel: plan.enemyLabel || this._getNightHordeEnemyLabel(plan.modifier),
             totalEnemies: Math.max(0, Number(plan.totalEnemies || 0)),
+            enemySequence: Array.isArray(plan.enemySequence) ? plan.enemySequence.slice() : [],
+            guaranteedBomberCount: Math.max(0, Number(plan.guaranteedBomberCount || 0)),
             spawnEvents: [],
             spawnedCount: 0,
             plan,
@@ -4000,6 +4070,7 @@ export class mapView extends Phaser.Scene {
                 repeat: -1
             });
         }
+        Projectile.ensureWeaponEffectAnimations();
         ZoomMixer.initMapIconContainer();
         this.wallDestroyer = new WallDestroyController(this);
 
@@ -4046,7 +4117,7 @@ export class mapView extends Phaser.Scene {
         // Add collision between the cube and the barriers
         // this.physics.add.collider(characters, GameMap.barrier);
         // this.physics.add.overlap(Player.characters, Player.characters, Player.handlePlayerCollision, null, this);
-        this.physics.add.collider(
+        this.physics.add.overlap(
             Player.characters,
             Projectile.projectileGroup,
             Projectile.handleCollision,
@@ -4055,7 +4126,7 @@ export class mapView extends Phaser.Scene {
         );
 
         GameMap.structureBarrier = this.physics.add.staticGroup(); // structures (walls/buildings) persistent
-        this.physics.add.collider(
+        this.physics.add.overlap(
             Projectile.projectileGroup,
             GameMap.structureBarrier,
             Projectile.handleStructureCollision,
@@ -4171,6 +4242,8 @@ export class mapView extends Phaser.Scene {
         // pointer move
         this.input.on("pointermove", (pointer) => {
             this._updateForagerRouteHoverCardPosition(pointer);
+            this._updateOverviewForagerRouteHover(pointer);
+            this._updateOverviewPlacementPreview(pointer);
             this._updateCropHoverCardPosition(pointer);
             this._updateWallHoverCardPosition(pointer);
             if (this.marketCardUseController?.active) this.marketCardUseController.onPointerMove(pointer);
@@ -4248,19 +4321,28 @@ export class mapView extends Phaser.Scene {
                 this.handleFarmPointerDown(pointer);
                 return;
             }
-            else if(GameMap.placingItem && !GameMap.placingItem.blocked){
+            else if(GameMap.placingItem){
                 const items = TILE_TYPES[this.registry.get('image')]
                 if (!items) {
                     return;
                 }
-                let x = Math.floor((pointer.x + cam.scrollX) / SQUARESIZE);
-                let y = Math.floor((pointer.y + cam.scrollY) / SQUARESIZE);
-                if(items == TILE_TYPES.player){GameMap.handleMapClick(x,y,items)}
+                const placement = this._resolveGridPlacementFromPointer(pointer, items);
+                if (!placement) return;
+                GameMap.checkBlockPosition(
+                    placement.gridX,
+                    placement.gridY,
+                    placement.lenX,
+                    placement.lenY,
+                    GameMap.placingItem,
+                    this._getPlacementOptionsForItem(items)
+                );
+                if (GameMap.placingItem.blocked) return;
+                if(items == TILE_TYPES.player){GameMap.handleMapClick(placement.gridX,placement.gridY,items)}
                 else{
                     buildingManager.queueBlockBuildTask({
                         type: items,
-                        x: x - Math.floor(items.lenX/2),
-                        y: y - Math.floor(items.lenY/2),
+                        x: placement.gridX,
+                        y: placement.gridY,
                         duration: 100,
                         assigned: 0
                     }, 1);
@@ -4972,6 +5054,383 @@ export class mapView extends Phaser.Scene {
         this.onPointerUp({ button: 0, _skipTrackpadTapArm: true });
     }
 
+    _getPlacementPointer(pointer = this.input?.activePointer) {
+        if (!pointer) return null;
+        if (Number.isFinite(pointer.worldX) && Number.isFinite(pointer.worldY)) return pointer;
+        const cam = this.cameras?.main;
+        if (!cam?.getWorldPoint || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y)) return pointer;
+        const world = cam.getWorldPoint(pointer.x, pointer.y);
+        return {
+            ...pointer,
+            worldX: world.x,
+            worldY: world.y,
+        };
+    }
+
+    _getPlacementOptionsForItem(item) {
+        return item?.block ? {
+            padding: 1,
+            protectFarmSpots: true,
+            paddingAllowWalls: true,
+            paddingProtectFarmSpots: false,
+            allowAutoClearSite: true,
+        } : {};
+    }
+
+    _resolveGridPlacementFromPointer(pointer, item) {
+        const p = this._getPlacementPointer(pointer);
+        if (!p || !item) return null;
+
+        const lenX = Math.max(1, Number(item.lenX || 1));
+        const lenY = Math.max(1, Number(item.lenY || 1));
+        let centerX = Math.floor(Number(p.worldX || 0) / SQUARESIZE) * SQUARESIZE;
+        let centerY = Math.floor(Number(p.worldY || 0) / SQUARESIZE) * SQUARESIZE;
+        if (lenX % 2 !== 0) centerX += SQUARESIZE / 2;
+        if (lenY % 2 !== 0) centerY += SQUARESIZE / 2;
+
+        return {
+            centerX,
+            centerY,
+            gridX: Math.floor(centerX / SQUARESIZE) - Math.floor(lenX / 2),
+            gridY: Math.floor(centerY / SQUARESIZE) - Math.floor(lenY / 2),
+            lenX,
+            lenY,
+        };
+    }
+
+    _ensureOverviewPlacementGraphics() {
+        if (this.overviewPlacementGraphics?.scene) return this.overviewPlacementGraphics;
+        this.overviewPlacementGraphics?.destroy?.();
+        this.overviewPlacementGraphics = this.add.graphics()
+            .setDepth(UIDEPTH - 0.2)
+            .setScrollFactor(1)
+            .setVisible(false);
+        return this.overviewPlacementGraphics;
+    }
+
+    _clearOverviewPlacementPreview() {
+        this.overviewPlacementGraphics?.clear?.();
+        this.overviewPlacementGraphics?.setVisible?.(false);
+    }
+
+    _resolveActivePlacementPreview(pointer = this.input?.activePointer) {
+        const p = this._getPlacementPointer(pointer);
+        if (!p) return null;
+
+        if (GameMap.isPlacing && GameMap.placingItem?.active) {
+            const item = GameMap.placingItem._placementItem || TILE_TYPES[this.registry.get("image")];
+            const placement = this._resolveGridPlacementFromPointer(p, item);
+            if (!placement) return null;
+
+            const tintColor = GameMap.checkBlockPosition(
+                placement.gridX,
+                placement.gridY,
+                placement.lenX,
+                placement.lenY,
+                GameMap.placingItem,
+                this._getPlacementOptionsForItem(item)
+            );
+            GameMap.placingItem.setPosition(placement.centerX, placement.centerY);
+            GameMap.placingItem.setTint(tintColor);
+
+            return {
+                ...placement,
+                item,
+                blocked: !!GameMap.placingItem.blocked,
+                sprites: [GameMap.placingItem],
+            };
+        }
+
+        const specialPlacers = [Turret, Catapult];
+        for (const placer of specialPlacers) {
+            const state = placer?.placementState;
+            if (!state?.topSprite?.active) continue;
+
+            const item = state.item;
+            const placement = placer.resolvePlacement?.(p, item);
+            if (!placement) continue;
+
+            const lenX = Math.max(1, Number(item?.lenX || 1));
+            const lenY = Math.max(1, Number(item?.lenY || 1));
+            const tintColor = GameMap.checkBlockPosition(
+                placement.gridX,
+                placement.gridY,
+                lenX,
+                lenY,
+                state.topSprite,
+                this._getPlacementOptionsForItem(item)
+            );
+
+            state.baseSprite?.setPosition?.(placement.centerX, placement.centerY);
+            state.topSprite?.setPosition?.(placement.centerX, placement.centerY);
+            state.baseSprite?.setTint?.(tintColor);
+            state.topSprite?.setTint?.(tintColor);
+
+            return {
+                centerX: placement.centerX,
+                centerY: placement.centerY,
+                gridX: placement.gridX,
+                gridY: placement.gridY,
+                lenX,
+                lenY,
+                item,
+                blocked: !!state.topSprite.blocked,
+                sprites: [state.baseSprite, state.topSprite],
+            };
+        }
+
+        return null;
+    }
+
+    _updateOverviewPlacementPreview(pointer = this.input?.activePointer) {
+        const placement = this._resolveActivePlacementPreview(pointer);
+        if (!placement) {
+            this._clearOverviewPlacementPreview();
+            return;
+        }
+
+        const isOverview = this.zoomMixer?.mode === "overview";
+        placement.sprites.forEach((sprite) => sprite?.setVisible?.(!isOverview));
+
+        if (!isOverview) {
+            this._clearOverviewPlacementPreview();
+            return;
+        }
+
+        const g = this._ensureOverviewPlacementGraphics();
+        if (!g) return;
+
+        const x = placement.gridX * SQUARESIZE;
+        const y = placement.gridY * SQUARESIZE;
+        const width = Math.max(1, placement.lenX * SQUARESIZE);
+        const height = Math.max(1, placement.lenY * SQUARESIZE);
+        const color = placement.blocked ? 0xff3b30 : 0x2fe66f;
+        const zoom = Math.max(0.08, Number(this.cameras?.main?.zoom || 1));
+        const lineWidth = Math.max(5, 6.5 / zoom);
+
+        g.clear();
+        g.setVisible(true);
+        g.lineStyle(lineWidth + Math.max(2, 2 / zoom), 0x06120a, 0.78);
+        g.strokeRect(x, y, width, height);
+        g.lineStyle(lineWidth, color, 0.98);
+        g.strokeRect(x, y, width, height);
+        g.lineStyle(Math.max(2, 2 / zoom), 0xffffff, placement.blocked ? 0.12 : 0.22);
+        g.strokeRect(
+            x + lineWidth * 0.35,
+            y + lineWidth * 0.35,
+            Math.max(2, width - lineWidth * 0.7),
+            Math.max(2, height - lineWidth * 0.7)
+        );
+    }
+
+    _clearOverviewForagerRouteHover() {
+        if (this._overviewForagerRouteHoverNode) {
+            this.setForagerRouteHover?.(
+                this._overviewForagerRouteHoverNode,
+                this._overviewForagerRouteHoverType,
+                false
+            );
+        }
+        this._overviewForagerRouteHoverNode = null;
+        this._overviewForagerRouteHoverType = null;
+    }
+
+    _updateOverviewForagerRouteHover(pointer = this.input?.activePointer) {
+        const p = this._getPlacementPointer(pointer);
+        const activePlacement = GameMap.isPlacing || Turret.isPlacing || Catapult.isPlacing;
+        if (
+            this.zoomMixer?.mode !== "overview" ||
+            activePlacement ||
+            !p ||
+            this._isPointerOnOverviewIcon(p, this.cameras?.main) ||
+            !this._getForagerRouteSelectionProfile()
+        ) {
+            this._clearOverviewForagerRouteHover();
+            return;
+        }
+
+        const match = this._findForagerRouteNodeAtWorld(p.worldX, p.worldY);
+        if (!match) {
+            this._clearOverviewForagerRouteHover();
+            return;
+        }
+
+        if (
+            this._overviewForagerRouteHoverNode === match.node &&
+            this._overviewForagerRouteHoverType === match.type
+        ) {
+            this._updateForagerRouteHoverCardPosition(p);
+            return;
+        }
+
+        this._clearOverviewForagerRouteHover();
+        this._overviewForagerRouteHoverNode = match.node;
+        this._overviewForagerRouteHoverType = match.type;
+        this.setForagerRouteHover(match.node, match.type, true, p);
+    }
+
+    _ensureOverviewConstructionOverlay() {
+        if (this.overviewConstructionGraphics?.scene) return this.overviewConstructionGraphics;
+        this.overviewConstructionGraphics?.destroy?.();
+        this.overviewConstructionGraphics = this.add.graphics()
+            .setDepth(UIDEPTH - 0.25)
+            .setScrollFactor(1)
+            .setVisible(false);
+        return this.overviewConstructionGraphics;
+    }
+
+    _clearOverviewConstructionOverlay({ destroyLabels = false } = {}) {
+        this.overviewConstructionGraphics?.clear?.();
+        this.overviewConstructionGraphics?.setVisible?.(false);
+        if (!this.overviewConstructionLabels) return;
+        for (const label of this.overviewConstructionLabels.values()) {
+            if (destroyLabels) label?.destroy?.();
+            else label?.setVisible?.(false);
+        }
+        if (destroyLabels) this.overviewConstructionLabels.clear();
+    }
+
+    _overviewConstructionEntries() {
+        const entries = [];
+        const seen = new Set();
+        const teams = Object.values(Teams.teamLists || {});
+
+        const addTask = (task, queueKey, teamNumber) => {
+            if (!task || seen.has(task) || task.canceled) return;
+            seen.add(task);
+
+            const type = task.type || task.buildType || null;
+            const x = Math.floor(Number(task.x));
+            const y = Math.floor(Number(task.y));
+            if (!type || !Number.isFinite(x) || !Number.isFinite(y)) return;
+
+            const lenX = Math.max(1, Number(type.lenX || task.lenX || 1));
+            const lenY = Math.max(1, Number(type.lenY || task.lenY || 1));
+            const pct = Math.max(0, Math.min(100, buildingManager._currentConstructionPercent?.(task) ?? 0));
+            const typeColor = colorFor(type.grid ?? type.interior ?? 0);
+
+            entries.push({
+                task,
+                queueKey,
+                teamNumber,
+                type,
+                x,
+                y,
+                lenX,
+                lenY,
+                pct,
+                color: typeColor,
+                waiting: !!buildingManager._isBlockBuildAwaitingSiteClear?.(task),
+                isWall: !!buildingManager._isQueuedWallTask?.(task),
+            });
+        };
+
+        for (const team of teams) {
+            const teamNumber = Number(team?.teamNumber ?? team?.id ?? 1) || 1;
+            (Array.isArray(team?.blockBuildingStates) ? team.blockBuildingStates : [])
+                .forEach((task) => addTask(task, "blockBuildingStates", teamNumber));
+            (Array.isArray(team?.buildingTileStates) ? team.buildingTileStates : [])
+                .forEach((task) => addTask(task, "buildingTileStates", teamNumber));
+        }
+
+        return entries;
+    }
+
+    _getOverviewConstructionLabel(task) {
+        if (!this.overviewConstructionLabels) this.overviewConstructionLabels = new Map();
+        let label = this.overviewConstructionLabels.get(task);
+        if (label?.scene) return label;
+
+        label = this.add.text(0, 0, "", {
+            fontFamily: "Bungee",
+            fontSize: "11px",
+            color: "#f8fffb",
+            stroke: "#06110a",
+            strokeThickness: 4,
+            align: "center",
+        })
+            .setOrigin(0.5)
+            .setDepth(UIDEPTH - 0.1)
+            .setScrollFactor(1)
+            .setVisible(false);
+        this.overviewConstructionLabels.set(task, label);
+        return label;
+    }
+
+    _setDetailedConstructionVisualsVisible(entries, visible) {
+        for (const entry of entries || []) {
+            entry.task?.constructionSprite?.setVisible?.(visible);
+            entry.task?.labelText?.setVisible?.(visible && !entry.isWall);
+        }
+    }
+
+    _updateOverviewConstructionOverlay() {
+        const entries = this._overviewConstructionEntries();
+        if (this.zoomMixer?.mode !== "overview") {
+            this._setDetailedConstructionVisualsVisible(entries, true);
+            this._clearOverviewConstructionOverlay();
+            return;
+        }
+
+        this._setDetailedConstructionVisualsVisible(entries, false);
+        const g = this._ensureOverviewConstructionOverlay();
+        if (!g) return;
+
+        const cam = this.cameras?.main;
+        const zoom = Math.max(0.08, Number(cam?.zoom || 1));
+        const lineWidth = Math.max(3.5, 4.5 / zoom);
+        const inset = Math.max(3, 3 / zoom);
+        const usedLabels = new Set();
+
+        g.clear();
+        g.setVisible(entries.length > 0);
+
+        for (const entry of entries) {
+            const x = entry.x * SQUARESIZE;
+            const y = entry.y * SQUARESIZE;
+            const width = entry.lenX * SQUARESIZE;
+            const height = entry.lenY * SQUARESIZE;
+            const innerX = x + inset;
+            const innerY = y + inset;
+            const innerW = Math.max(2, width - inset * 2);
+            const innerH = Math.max(2, height - inset * 2);
+            const fillH = innerH * (entry.pct / 100);
+            const alpha = entry.waiting ? 0.18 : 0.34;
+
+            g.fillStyle(0x04120b, 0.36);
+            g.fillRect(innerX, innerY, innerW, innerH);
+            if (fillH > 0) {
+                g.fillStyle(entry.color, alpha);
+                g.fillRect(innerX, innerY + innerH - fillH, innerW, fillH);
+            }
+
+            g.lineStyle(lineWidth + Math.max(1.5, 1.5 / zoom), 0x06110a, 0.72);
+            g.strokeRect(x, y, width, height);
+            g.lineStyle(lineWidth, entry.color, entry.waiting ? 0.58 : 0.94);
+            g.strokeRect(x, y, width, height);
+
+            const screenMin = Math.min(width, height) * zoom;
+            const showLabel = screenMin >= 24 && (!entry.isWall || entry.lenX * entry.lenY > 1);
+            const label = this._getOverviewConstructionLabel(entry.task);
+            usedLabels.add(entry.task);
+            if (showLabel) {
+                label
+                    .setText(`${entry.pct}%`)
+                    .setPosition(x + width / 2, y + height / 2)
+                    .setScale(1 / zoom)
+                    .setVisible(true);
+            } else {
+                label.setVisible(false);
+            }
+        }
+
+        for (const [task, label] of this.overviewConstructionLabels.entries()) {
+            if (usedLabels.has(task)) continue;
+            label?.destroy?.();
+            this.overviewConstructionLabels.delete(task);
+        }
+    }
+
     _getForagerRouteSelectionProfile() {
         const profile = OrderRunner.getSelectionProfile(Player.selected);
         if (!profile.allForagers) return null;
@@ -5110,9 +5569,16 @@ export class mapView extends Phaser.Scene {
         const glow = this._ensureForagerRouteGlow();
         glow.clear();
 
-        if (routeMode === "overview" || !profile) {
+        if (!profile) {
             glow.setVisible(false);
             this.hideForagerRouteInstruction();
+            return;
+        }
+
+        if (routeMode === "overview") {
+            glow.setVisible(false);
+            if (this.foragerRouteHoverType) this.showForagerRouteInstruction(this.foragerRouteHoverType);
+            else this.hideForagerRouteInstruction();
             return;
         }
 
@@ -5228,9 +5694,42 @@ export class mapView extends Phaser.Scene {
         return true;
     }
 
+    _getForagerRouteUiHost() {
+        const uiScene = this.uiScene;
+        const uiSceneActive = !!(uiScene?.sys?.isActive?.() || uiScene?.scene?.isActive?.());
+        if (uiSceneActive && uiScene?.add && !uiScene._sceneShuttingDown) {
+            return uiScene;
+        }
+        return this;
+    }
+
+    _positionForagerRouteScreenObject(obj, screenX, screenY) {
+        if (!obj) return;
+        if (obj.scene !== this) {
+            obj.setPosition(screenX, screenY).setScale(1);
+            return;
+        }
+
+        const zoom = Math.max(0.0001, Number(this.cameras?.main?.zoom || 1));
+        obj.setPosition(screenX / zoom, screenY / zoom).setScale(1 / zoom);
+    }
+
+    _syncForagerRouteScreenUi(pointer = null) {
+        if (this.foragerRouteInstructionUI?.visible) {
+            this._positionForagerRouteScreenObject(
+                this.foragerRouteInstructionUI,
+                this.scale.width / 2,
+                132
+            );
+        }
+        this._updateForagerRouteHoverCardPosition(pointer);
+    }
+
     ensureForagerRouteInstructionUI() {
+        const host = this._getForagerRouteUiHost();
         if (
             this.foragerRouteInstructionUI?.active &&
+            this.foragerRouteInstructionUI.scene === host &&
             this.foragerRouteInstructionBg?.scene &&
             this.foragerRouteInstructionLeft?.scene &&
             this.foragerRouteInstructionTarget?.scene &&
@@ -5240,28 +5739,28 @@ export class mapView extends Phaser.Scene {
         }
 
         this.foragerRouteInstructionUI?.destroy?.(true);
-        this.foragerRouteInstructionUI = this.add.container(this.scale.width / 2, 132)
+        this.foragerRouteInstructionUI = host.add.container(this.scale.width / 2, 132)
             .setDepth(UIDEPTH + 42)
             .setScrollFactor(0)
             .setVisible(false)
             .setAlpha(0);
 
-        this.foragerRouteInstructionBg = this.add.graphics().setScrollFactor(0);
-        this.foragerRouteInstructionLeft = this.add.text(0, 0, "", {
+        this.foragerRouteInstructionBg = host.add.graphics().setScrollFactor(0);
+        this.foragerRouteInstructionLeft = host.add.text(0, 0, "", {
             fontFamily: "Bungee",
             fontSize: "15px",
             color: "#f6fcff",
             stroke: "#06111b",
             strokeThickness: 4,
         }).setOrigin(0, 0.5).setScrollFactor(0);
-        this.foragerRouteInstructionTarget = this.add.text(0, 0, "", {
+        this.foragerRouteInstructionTarget = host.add.text(0, 0, "", {
             fontFamily: "Bungee",
             fontSize: "15px",
             color: "#86efac",
             stroke: "#06111b",
             strokeThickness: 4,
         }).setOrigin(0, 0.5).setScrollFactor(0);
-        this.foragerRouteInstructionRight = this.add.text(0, 0, "", {
+        this.foragerRouteInstructionRight = host.add.text(0, 0, "", {
             fontFamily: "Bungee",
             fontSize: "15px",
             color: "#d9f3ff",
@@ -5276,9 +5775,12 @@ export class mapView extends Phaser.Scene {
             this.foragerRouteInstructionRight,
         ]);
 
-        this._trackScaleResize(({ width }) => {
-            this.foragerRouteInstructionUI?.setX(width / 2);
-        });
+        if (!this.foragerRouteInstructionResizeTracked) {
+            this.foragerRouteInstructionResizeTracked = true;
+            this._trackScaleResize(({ width }) => {
+                this._positionForagerRouteScreenObject(this.foragerRouteInstructionUI, width / 2, 132);
+            });
+        }
     }
 
     _layoutForagerRouteInstruction() {
@@ -5339,13 +5841,14 @@ export class mapView extends Phaser.Scene {
         }
 
         this._layoutForagerRouteInstruction();
+        this._positionForagerRouteScreenObject(this.foragerRouteInstructionUI, this.scale.width / 2, 132);
         if (!this.foragerRouteInstructionUI.visible) {
-            this.foragerRouteInstructionUI.setVisible(true).setAlpha(0).setScale(0.96);
-            this.tweens.add({
+            const tweenHost = this.foragerRouteInstructionUI.scene || this;
+            tweenHost.tweens?.killTweensOf?.(this.foragerRouteInstructionUI);
+            this.foragerRouteInstructionUI.setVisible(true).setAlpha(0);
+            tweenHost.tweens?.add({
                 targets: this.foragerRouteInstructionUI,
                 alpha: 1,
-                scaleX: 1,
-                scaleY: 1,
                 duration: 130,
                 ease: "Quad.easeOut",
             });
@@ -5353,8 +5856,10 @@ export class mapView extends Phaser.Scene {
     }
 
     _ensureForagerRouteHoverCard() {
+        const host = this._getForagerRouteUiHost();
         if (
             this.foragerRouteHoverCard?.active &&
+            this.foragerRouteHoverCard.scene === host &&
             this.foragerRouteHoverCardBg?.scene &&
             this.foragerRouteHoverCardIcon?.scene &&
             this.foragerRouteHoverCardLabel?.scene
@@ -5363,16 +5868,16 @@ export class mapView extends Phaser.Scene {
         }
 
         this.foragerRouteHoverCard?.destroy?.(true);
-        this.foragerRouteHoverCard = this.add.container(0, 0)
+        this.foragerRouteHoverCard = host.add.container(0, 0)
             .setDepth(UIDEPTH + 910)
             .setScrollFactor(0)
             .setVisible(false)
             .setAlpha(0);
-        this.foragerRouteHoverCardBg = this.add.graphics().setScrollFactor(0);
-        this.foragerRouteHoverCardIcon = this.add.image(0, 0, "woodIcon")
+        this.foragerRouteHoverCardBg = host.add.graphics().setScrollFactor(0);
+        this.foragerRouteHoverCardIcon = host.add.image(0, 0, "woodIcon")
             .setOrigin(0.5)
             .setScrollFactor(0);
-        this.foragerRouteHoverCardLabel = this.add.text(0, 0, "", {
+        this.foragerRouteHoverCardLabel = host.add.text(0, 0, "", {
             fontFamily: "Barlow Semi Condensed",
             fontSize: "16px",
             fontStyle: "bold",
@@ -5473,7 +5978,8 @@ export class mapView extends Phaser.Scene {
             y = Math.min(this.scale.height - height - margin, Number(p.y || 0) + 18);
         }
 
-        card.setPosition(
+        this._positionForagerRouteScreenObject(
+            card,
             Phaser.Math.Clamp(x, margin, Math.max(margin, this.scale.width - width - margin)),
             Phaser.Math.Clamp(y, margin, Math.max(margin, this.scale.height - height - margin)),
         );
@@ -5918,7 +6424,7 @@ export class mapView extends Phaser.Scene {
 
     hideForagerRouteInstruction() {
         if (!this.foragerRouteInstructionUI?.visible) return;
-        this.tweens.killTweensOf(this.foragerRouteInstructionUI);
+        (this.foragerRouteInstructionUI.scene || this).tweens?.killTweensOf?.(this.foragerRouteInstructionUI);
         this.foragerRouteInstructionUI.setVisible(false).setAlpha(0);
     }
 
@@ -6839,7 +7345,11 @@ cancelFarmSelection(exitFarmMode = false) {
         }
         this._updateCropHoverCardPosition();
         this._updateWallHoverCardPosition();
+        this._updateOverviewForagerRouteHover();
+        this._updateOverviewPlacementPreview();
+        this._updateOverviewConstructionOverlay();
         this.updateForagerRouteAssist();
+        this._syncForagerRouteScreenUi();
         ClayOvenUI.updateAllOvens(effectiveSimSpeed);
         this._refreshNorthFortArrivalMarker();
         this._syncNightPressurePreviewPanels();

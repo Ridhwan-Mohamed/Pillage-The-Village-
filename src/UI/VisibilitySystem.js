@@ -585,7 +585,7 @@ export class VisibilitySystem {
       for (let gy = miny; gy <= maxy; gy++) {
         const rowOff = (gy - vy0) * tilesW;
         for (let gx = minx; gx <= maxx; gx++) {
-          const dx = gx - x, dy = gy - y;
+          const dx = (gx + 0.5) - x, dy = (gy + 0.5) - y;
           if (dx*dx + dy*dy <= r2) {
             const j = rowOff + (gx - vx0);
             if (target > this._fog[j]) this._fog[j] = target;
@@ -624,7 +624,7 @@ export class VisibilitySystem {
       for (let gy = miny; gy <= maxy; gy++) {
         const rowOff = (gy - vy0) * tilesW;
         for (let gx = minx; gx <= maxx; gx++) {
-          const dx = gx - x, dy = gy - y;
+          const dx = (gx + 0.5) - x, dy = (gy + 0.5) - y;
           const d2 = dx*dx + dy*dy;
           if (d2 > r2) continue;
           const fall = 1 - Math.sqrt(d2) / r;          // linear falloff

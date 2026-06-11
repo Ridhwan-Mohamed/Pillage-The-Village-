@@ -99,8 +99,8 @@ export class TowerBuilding {
         .setDepth(BLOCKDEPTH)
         .setInteractive({ useHandCursor: true })
     );
-    const cx = x + Math.floor((lenX || 1) / 2);
-    const cy = y + Math.floor((lenY || 1) / 2);
+    const cx = x + (lenX || 1) / 2;
+    const cy = y + (lenY || 1) / 2;
     this.visionId = VisibilitySystem.addVisionBubble({ x: cx, y: cy, r: 7, boost: 0.12 });
     this.lightId = VisibilitySystem.addLightSource({ x: cx, y: cy, r: 6, brightness: 2 });
 

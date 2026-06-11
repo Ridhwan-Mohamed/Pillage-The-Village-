@@ -1,7 +1,9 @@
 const STORAGE_KEY = "processv2.store_unlocks_v1";
+const DEMO_COMPLETED_STORAGE_KEY = "processv2.demo_completed_v1";
 const DISABLED_STORE_UNLOCK_KEYS = Object.freeze(["turret", "catapult"]);
 
 let cachedUnlocks = null;
+let cachedDemoCompleted = null;
 
 function getStorage() {
   try {
@@ -56,6 +58,15 @@ export const STORE_UNLOCK_KEYS = Object.freeze({
   militiaParcel: "militia_parcel",
 });
 
+export const DEMO_COMPLETION_STORE_UNLOCK_LABELS = Object.freeze({
+  [STORE_UNLOCK_KEYS.blademaster]: "Blademaster",
+  [STORE_UNLOCK_KEYS.gunslinger]: "Gunslinger",
+  [STORE_UNLOCK_KEYS.stoneWall]: "Stone Walls",
+  [STORE_UNLOCK_KEYS.militiaParcel]: "Militia Parcels",
+});
+
+export const DEMO_COMPLETION_STORE_UNLOCK_KEYS = Object.freeze(Object.keys(DEMO_COMPLETION_STORE_UNLOCK_LABELS));
+
 export function hasStoreUnlock(key) {
   if (!key) return false;
   if (DISABLED_STORE_UNLOCK_KEYS.includes(key)) return false;
@@ -82,6 +93,58 @@ export function unlockStoreItem(key, scene = null) {
   });
 
   return changed;
+}
+
+export function hasDemoCompleted() {
+  if (cachedDemoCompleted != null) return !!cachedDemoCompleted;
+
+  const storage = getStorage();
+  if (!storage) {
+    cachedDemoCompleted = false;
+    return false;
+  }
+
+  try {
+    cachedDemoCompleted = storage.getItem(DEMO_COMPLETED_STORAGE_KEY) === "1";
+  } catch {
+    cachedDemoCompleted = false;
+  }
+
+  return !!cachedDemoCompleted;
+}
+
+export function setDemoCompleted(completed = true, scene = null) {
+  const next = !!completed;
+  const previous = hasDemoCompleted();
+  cachedDemoCompleted = next;
+
+  const storage = getStorage();
+  if (storage) {
+    try {
+      if (next) storage.setItem(DEMO_COMPLETED_STORAGE_KEY, "1");
+      else storage.removeItem(DEMO_COMPLETED_STORAGE_KEY);
+    } catch {}
+  }
+
+  const changed = previous !== next;
+  scene?.events?.emit?.("demo:completion-changed", {
+    completed: next,
+    changed,
+  });
+  return changed;
+}
+
+export function grantDemoCompletionStoreUnlocks(scene = null) {
+  const unlockedLabels = [];
+  const mirrorScene = scene?.uiScene && scene.uiScene !== scene
+    ? scene.uiScene
+    : (scene?.worldScene && scene.worldScene !== scene ? scene.worldScene : null);
+  for (const key of DEMO_COMPLETION_STORE_UNLOCK_KEYS) {
+    const changed = unlockStoreItem(key, scene);
+    if (mirrorScene) unlockStoreItem(key, mirrorScene);
+    if (changed) unlockedLabels.push(DEMO_COMPLETION_STORE_UNLOCK_LABELS[key] || key);
+  }
+  return unlockedLabels;
 }
 
 export function resetStoreUnlocks(keys = null, scene = null) {

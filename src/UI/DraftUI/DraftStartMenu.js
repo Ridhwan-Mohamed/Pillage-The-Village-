@@ -1,5 +1,8 @@
 import Phaser from "phaser";
-import { DraftStartState } from "./DraftStartState.js";
+import {
+  DEFAULT_LAYOUT_MOVE_RANGE,
+  DraftStartState,
+} from "./DraftStartState.js";
 import { DraftStartPreviewController } from "./DraftStartPreviewController.js";
 import { TeamNameInput } from "./TeamNameInput.js";
 import { getCardOutlineTint } from "../CardPreview.js";
@@ -36,7 +39,8 @@ const SCREEN_TINT = 0x061520;
 const TEXT_LIGHT = "#f8fcff";
 const TEXT_MUTED = "#b7d3e0";
 const TEXT_SUBTLE = "#7fa2b7";
-const TEXT_WARM = "#ffe5c8";
+const TEXT_GOOD = "#7dffbd";
+const TEXT_DANGER = "#ff9b8f";
 
 const _LEGACY_BUILDING_META = Object.freeze({
   tower: { emoji: "🗼", label: "Town Tower" },
@@ -277,8 +281,15 @@ export class DraftStartMenu {
       confirmGlowWidth,
       confirmGlowHeight,
       backButtonWidth,
-      layoutInfoWidth: Math.min(Math.round(332 * scale), Math.round(width * 0.22)),
-      layoutInfoHeight: Math.round((compact ? 220 : 244) * scale),
+      layoutInfoWidth: clamp(
+        Math.round(360 * scale),
+        300,
+        Math.min(Math.round(width * 0.3), 380),
+      ),
+      layoutInfoHeight: clamp(Math.round((compact ? 150 : 158) * scale), 124, 158),
+      layoutMoveHudWidth: clamp(Math.round(500 * scale), 320, Math.min(width - pagePad * 2, 560)),
+      layoutMoveHudHeight: clamp(Math.round(34 * scale), 28, 36),
+      layoutMoveHudY: footerY - Math.round((footerHeight / 2) + Math.round(24 * scale)),
       layoutLegendWidth: Math.min(Math.round(332 * scale), Math.round(width * 0.22)),
       layoutLegendHeight: Math.round((compact ? 248 : 266) * scale),
       layoutPanelY: clamp(
@@ -387,9 +398,13 @@ export class DraftStartMenu {
 
     const input = this._getTeamNameInputElement();
     if (!input) return;
-    input.style.background = isInvalid ? "rgba(118,21,33,0.84)" : "rgba(255,255,255,0.02)";
-    input.style.borderColor = isInvalid ? "rgba(255,138,150,0.94)" : "rgba(255,255,255,0.05)";
-    input.style.boxShadow = isInvalid ? "0 0 0 2px rgba(255,110,129,0.22)" : "none";
+    input.style.background = "#000000";
+    input.style.color = "#ffffff";
+    input.style.setProperty("-webkit-text-fill-color", "#ffffff");
+    input.style.borderColor = isInvalid ? "rgba(255,138,150,0.94)" : "#ffffff";
+    input.style.boxShadow = "none";
+    input.style.textShadow = "none";
+    input.style.webkitTextStroke = "0";
   }
 
   _shakeTeamNameInput() {
@@ -446,6 +461,15 @@ export class DraftStartMenu {
         top: buttonY - this.layout.confirmButtonHeight / 2,
         bottom: buttonY + this.layout.confirmButtonHeight / 2,
       });
+    }
+
+    if (
+      this.phase === "layout"
+      && this.selectedPlacedBuilding
+      && this.ui.layoutMoveHud?.visible !== false
+      && this.ui.layoutMoveHudRect
+    ) {
+      rects.push(this.ui.layoutMoveHudRect);
     }
 
     this.ui.mapInteractionRects = rects;
@@ -537,6 +561,85 @@ export class DraftStartMenu {
     this.ui.layoutTooltip?.container?.setVisible(false);
   }
 
+  _getLayoutMoveRange() {
+    return Math.max(0, Math.floor(Number(this.state.layoutMoveRange ?? DEFAULT_LAYOUT_MOVE_RANGE)));
+  }
+
+  _getLayoutInfoBodyText() {
+    const moveRange = this._getLayoutMoveRange();
+    const tileLabel = moveRange === 1 ? "tile" : "tiles";
+    return `Click any building to move it up to five ${tileLabel} from its current position. Once your town layout feels settled, press Start to begin the game.`;
+  }
+
+  _getLayoutMoveDistance(building, gridX, gridY) {
+    const originX = Number.isFinite(building?.originX) ? building.originX : building?.x;
+    const originY = Number.isFinite(building?.originY) ? building.originY : building?.y;
+    return Math.abs(gridX - originX) + Math.abs(gridY - originY);
+  }
+
+  _drawLayoutMoveHudBg(valid = true) {
+    const bg = this.ui.layoutMoveHudBg;
+    if (!bg || !this.layout) return;
+
+    const width = this.layout.layoutMoveHudWidth;
+    const height = this.layout.layoutMoveHudHeight;
+    const radius = Math.max(10, Math.round(12 * this.layout.scale));
+    const accent = valid ? 0x66ff66 : 0xff6666;
+
+    bg.clear();
+    bg.fillStyle(0x10293b, 0.72);
+    bg.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
+    bg.fillStyle(0xffffff, 0.08);
+    bg.fillRoundedRect(
+      -width / 2 + 2,
+      -height / 2 + 2,
+      width - 4,
+      Math.max(8, height * 0.42),
+      radius - 2,
+    );
+    bg.lineStyle(2, accent, valid ? 0.22 : 0.34);
+    bg.strokeRoundedRect(-width / 2, -height / 2, width, height, radius);
+  }
+
+  _updateLayoutMoveHud(targetX = null, targetY = null) {
+    const hud = this.ui.layoutMoveHud;
+    const label = this.ui.layoutMoveHudText;
+    const building = this.selectedPlacedBuilding;
+    if (!hud || !label || !building) {
+      this._hideLayoutMoveHud();
+      return;
+    }
+
+    const gridX = Number.isFinite(targetX) ? targetX : building.x;
+    const gridY = Number.isFinite(targetY) ? targetY : building.y;
+    const range = this._getLayoutMoveRange();
+    const distance = this._getLayoutMoveDistance(building, gridX, gridY);
+    const remaining = Math.max(0, range - distance);
+    const inRange = distance <= range;
+    const meta = this._getBuildingMeta(building.typeKey ?? building.type?.name);
+    const spotsWord = remaining === 1 ? "spot" : "spots";
+    const status = inRange ? `${remaining} ${spotsWord} left` : "too far";
+
+    label.setText(`${meta.emoji} Moving ${meta.label} | ${status}`);
+    label.setColor(inRange ? TEXT_GOOD : TEXT_DANGER);
+    this._drawLayoutMoveHudBg(inRange);
+
+    hud.setVisible(true).setAlpha(1);
+    this.ui.layoutMoveHudRect = {
+      left: hud.x - this.layout.layoutMoveHudWidth / 2,
+      right: hud.x + this.layout.layoutMoveHudWidth / 2,
+      top: hud.y - this.layout.layoutMoveHudHeight / 2,
+      bottom: hud.y + this.layout.layoutMoveHudHeight / 2,
+    };
+    this._updateFooterSummaryLayout();
+  }
+
+  _hideLayoutMoveHud() {
+    this.ui.layoutMoveHud?.setVisible(false).setAlpha(0);
+    this.ui.layoutMoveHudRect = null;
+    this._updateFooterSummaryLayout();
+  }
+
   _pointerToGrid(pointer) {
     const cam = this.worldScene?.cameras?.main;
     if (!cam) return null;
@@ -566,9 +669,11 @@ export class DraftStartMenu {
       y: Math.max(0, grabY - building.y),
     };
     this._refreshUI();
+    this._updateLayoutMoveHud(building.x, building.y);
   }
 
   _clearSelectedPlacedBuilding() {
+    this._hideLayoutMoveHud();
     this.selectedPlacedBuilding = null;
     this.selectedPlacedBuildingGrab = { x: 0, y: 0 };
     this.preview.clearHover?.();
@@ -588,7 +693,15 @@ export class DraftStartMenu {
       }
 
       const moved = this.preview.tryMoveSelected(this.selectedPlacedBuilding, this.state, targetX, targetY);
-      if (!moved?.ok) return false;
+      if (!moved?.ok) {
+        AudioManager.playError({ volume: 0.18 });
+        this._updateLayoutMoveHud(targetX, targetY);
+        const text = moved?.reason === "out of range"
+          ? `Too far: max ${this.state.layoutMoveRange ?? DEFAULT_LAYOUT_MOVE_RANGE} tiles`
+          : "Invalid layout spot";
+        this._showLayoutTooltip(pointer, text, TEXT_DANGER);
+        return false;
+      }
 
       this.preview._refreshSpawnIfInvalid?.(this.state.crew);
       const meta = this._getBuildingMeta(this.selectedPlacedBuilding.typeKey ?? this.selectedPlacedBuilding.type?.name);
@@ -615,8 +728,8 @@ export class DraftStartMenu {
         const targetX = point.gridX - (this.selectedPlacedBuildingGrab?.x ?? 0);
         const targetY = point.gridY - (this.selectedPlacedBuildingGrab?.y ?? 0);
         this.preview.setMoveHover(this.selectedPlacedBuilding, this.state, targetX, targetY);
-        const meta = this._getBuildingMeta(this.selectedPlacedBuilding?.typeKey);
-        this._showLayoutTooltip(pointer, `${meta.emoji} Move ${meta.label}`, meta.color);
+        this._updateLayoutMoveHud(targetX, targetY);
+        this._hideLayoutTooltip();
         return;
       }
 
@@ -961,13 +1074,13 @@ export class DraftStartMenu {
         .draft-town-name-input::placeholder {
           font-family:"Bungee", cursive !important;
           font-weight:400 !important;
-          letter-spacing:0.02em !important;
+          letter-spacing:0 !important;
+          text-shadow:none !important;
+          -webkit-text-stroke:0 !important;
         }
         .draft-town-name-input::placeholder {
-          color:#050b10 !important;
-          opacity:0.92 !important;
-          -webkit-text-stroke:0.5px #ffffff;
-          text-shadow:0 0 1px rgba(255,255,255,0.72) !important;
+          color:#d1d5db !important;
+          opacity:1 !important;
         }
       `,
       inputStyle: `
@@ -977,17 +1090,18 @@ export class DraftStartMenu {
         font-family:"Bungee", cursive;
         font-weight:400;
         border-radius:${Math.round(16 * layout.scale)}px;
-        border:1px solid rgba(13,33,48,0.98);
+        border:1px solid #ffffff;
         box-shadow:none;
         -webkit-appearance:none;
         appearance:none;
-        background:rgba(13,33,48,0.98);
-        color:#050b10;
-        -webkit-text-stroke:0.5px #ffffff;
-        text-shadow:0 0 1px rgba(255,255,255,0.72);
+        background:#000000;
+        color:#ffffff;
+        -webkit-text-fill-color:#ffffff;
+        -webkit-text-stroke:0;
+        text-shadow:none;
         outline:none;
         caret-color:#ffffff;
-        letter-spacing:0.02em;
+        letter-spacing:0;
       `,
     });
 
@@ -1086,9 +1200,9 @@ export class DraftStartMenu {
       this._displayStyle(10, {
         min: 10,
         scale: contentScale,
-        color: TEXT_LIGHT,
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * contentScale)),
+        color: "#f4fdff",
+        stroke: "#03111c",
+        strokeThickness: Math.max(2, Math.round(3 * contentScale)),
       }),
     ).setOrigin(0.5);
 
@@ -1099,9 +1213,9 @@ export class DraftStartMenu {
       this._displayStyle(24, {
         min: 18,
         scale: contentScale,
-        color: TEXT_LIGHT,
-        stroke: "#08131d",
-        strokeThickness: Math.max(2, Math.round(4 * contentScale)),
+        color: "#ffffff",
+        stroke: "#03111c",
+        strokeThickness: Math.max(3, Math.round(5 * contentScale)),
         wordWrap: { width: innerWidth },
       }),
     ).setOrigin(0, 0.5);
@@ -1114,8 +1228,8 @@ export class DraftStartMenu {
         min: 12,
         scale: contentScale,
         color: deck.accent,
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * contentScale)),
+        stroke: "#03111c",
+        strokeThickness: Math.max(2, Math.round(3 * contentScale)),
         wordWrap: { width: innerWidth },
       }),
     ).setOrigin(0, 0.5);
@@ -1127,8 +1241,8 @@ export class DraftStartMenu {
       this._displayStyle(10, {
         min: 10,
         scale: contentScale,
-        color: TEXT_MUTED,
-        stroke: "#08131d",
+        color: "#d8eef7",
+        stroke: "#03111c",
         strokeThickness: Math.max(1, Math.round(2 * contentScale)),
         wordWrap: { width: innerWidth },
         lineSpacing: Math.max(2, Math.round(4 * contentScale)),
@@ -1142,9 +1256,9 @@ export class DraftStartMenu {
       this._displayStyle(12, {
         min: 11,
         scale: contentScale,
-        color: "#ddeff8",
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * contentScale)),
+        color: "#effbff",
+        stroke: "#03111c",
+        strokeThickness: Math.max(2, Math.round(3 * contentScale)),
       }),
     ).setOrigin(0, 0.5);
 
@@ -1167,9 +1281,9 @@ export class DraftStartMenu {
       this._displayStyle(12, {
         min: 11,
         scale: contentScale,
-        color: "#ddeff8",
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * contentScale)),
+        color: "#effbff",
+        stroke: "#03111c",
+        strokeThickness: Math.max(2, Math.round(3 * contentScale)),
       }),
     ).setOrigin(0, 0.5);
 
@@ -1207,9 +1321,9 @@ export class DraftStartMenu {
       this._displayStyle(12, {
         min: 11,
         scale: contentScale,
-        color: TEXT_LIGHT,
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * contentScale)),
+        color: "#effbff",
+        stroke: "#03111c",
+        strokeThickness: Math.max(2, Math.round(3 * contentScale)),
       }),
     ).setOrigin(0, 0.5);
 
@@ -1322,6 +1436,8 @@ export class DraftStartMenu {
     const legendHeight = layout.layoutLegendHeight;
     const panelY = layout.layoutPanelY;
     const infoX = Math.round(layout.pagePad + infoWidth / 2 + 12 * scale);
+    const moveHudX = Math.round(width / 2);
+    const moveHudY = layout.layoutMoveHudY;
     const legendX = width - Math.round(layout.pagePad + legendWidth / 2 + 12 * scale);
 
     const info = scene.add.container(infoX, panelY);
@@ -1330,52 +1446,62 @@ export class DraftStartMenu {
       fillAlpha: 0.84,
       strokeColor: 0xb9efff,
       strokeAlpha: 0.16,
-      radius: Math.round(28 * scale),
+      radius: Math.round(20 * scale),
       shadowColor: 0x08131c,
       shadowAlpha: 0.24,
       shadowOffsetY: Math.round(12 * scale),
     });
+    const infoShine = this._makeRoundedPanel(infoWidth - Math.round(4 * scale), Math.max(20, Math.round(infoHeight * 0.38)), {
+      fillColor: 0xffffff,
+      fillAlpha: 0.08,
+      radius: Math.round(16 * scale),
+    });
+    infoShine.y = -infoHeight / 2 + Math.max(10, Math.round(infoHeight * 0.19));
     const infoTitle = scene.add.text(
       -infoWidth / 2 + Math.round(26 * scale),
-      -infoHeight / 2 + Math.round(30 * scale),
+      -infoHeight / 2 + Math.round(25 * scale),
       "Town Layout",
-      this._displayStyle(24, {
-        min: 18,
+      this._displayStyle(20, {
+        min: 16,
         scale,
         color: TEXT_LIGHT,
         stroke: "#09131c",
-        strokeThickness: Math.max(2, Math.round(4 * scale)),
+        strokeThickness: Math.max(2, Math.round(3 * scale)),
       }),
     ).setOrigin(0, 0.5);
     const infoBody = scene.add.text(
       -infoWidth / 2 + Math.round(26 * scale),
-      -infoHeight / 2 + Math.round(72 * scale),
-      "You may move buildings.\nKeep one land tile between buildings and water.",
-      this._displayStyle(13, {
+      -infoHeight / 2 + Math.round(58 * scale),
+      this._getLayoutInfoBodyText(),
+      this._displayStyle(12, {
         min: 12,
         scale,
         color: TEXT_MUTED,
         stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * scale)),
-        wordWrap: { width: infoWidth - Math.round(54 * scale) },
-        lineSpacing: Math.round(5 * scale),
-      }),
-    ).setOrigin(0, 0);
-    const infoSelected = scene.add.text(
-      -infoWidth / 2 + Math.round(26 * scale),
-      infoHeight / 2 - Math.round(28 * scale),
-      "Click a building, then click an open tile.",
-      this._displayStyle(12, {
-        min: 11,
-        scale,
-        color: TEXT_WARM,
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * scale)),
+        strokeThickness: Math.max(2, Math.round(3 * scale)),
         wordWrap: { width: infoWidth - Math.round(54 * scale) },
         lineSpacing: Math.round(4 * scale),
       }),
-    ).setOrigin(0, 1);
-    info.add([infoShell, infoTitle, infoBody, infoSelected]);
+    ).setOrigin(0, 0);
+    info.add([infoShell, infoShine, infoTitle, infoBody]);
+
+    const moveHud = scene.add.container(moveHudX, moveHudY)
+      .setVisible(false)
+      .setAlpha(0);
+    const moveHudBg = scene.add.graphics();
+    const moveHudText = scene.add.text(
+      0,
+      0,
+      "",
+      this._displayStyle(13, {
+        min: 12,
+        scale,
+        color: TEXT_GOOD,
+        stroke: "#000000",
+        strokeThickness: Math.max(2, Math.round(3 * scale)),
+      }),
+    ).setOrigin(0.5);
+    moveHud.add([moveHudBg, moveHudText]);
 
     const legend = scene.add.container(legendX, panelY);
     const legendShell = this._makeRoundedPanel(legendWidth, legendHeight, {
@@ -1464,12 +1590,15 @@ export class DraftStartMenu {
     ).setOrigin(0.5);
     tooltip.add([tooltipBg, tooltipLabel]);
 
-    stage.add([info, legend, tooltip]);
+    stage.add([info, legend, moveHud, tooltip]);
     this.container.add(stage);
 
     this.ui.layoutStage = stage;
     this.ui.layoutInfoBody = infoBody;
-    this.ui.layoutInfoSelected = infoSelected;
+    this.ui.layoutMoveHud = moveHud;
+    this.ui.layoutMoveHudBg = moveHudBg;
+    this.ui.layoutMoveHudText = moveHudText;
+    this.ui.layoutMoveHudRect = null;
     this.ui.layoutLegendRefs = legendRefs;
     this.ui.layoutTooltip = {
       container: tooltip,
@@ -1532,7 +1661,9 @@ export class DraftStartMenu {
           this._labelStyle(entry.key === "money" ? 9 : 10, {
             min: 10,
             scale: contentScale,
-            color: TEXT_LIGHT,
+            color: "#f7fdff",
+            stroke: "#03111c",
+            strokeThickness: Math.max(1, Math.round(2 * contentScale)),
           }),
         ).setOrigin(0, 0.5);
 
@@ -1580,9 +1711,9 @@ export class DraftStartMenu {
       this._displayStyle(10, {
         min: 10,
         scale: contentScale,
-        color: TEXT_LIGHT,
-        stroke: "#08131d",
-        strokeThickness: Math.max(1, Math.round(2 * contentScale)),
+        color: "#f7fdff",
+        stroke: "#03111c",
+        strokeThickness: Math.max(2, Math.round(3 * contentScale)),
         align: "center",
         wordWrap: { width: width - Math.round(16 * contentScale) },
       }),
@@ -1669,8 +1800,8 @@ export class DraftStartMenu {
         this._displayStyle(8, {
           min: 8,
           scale: contentScale,
-          color: TEXT_LIGHT,
-          stroke: "#08131d",
+          color: "#edf9ff",
+          stroke: "#03111c",
           strokeThickness: Math.max(1, Math.round(2 * contentScale)),
           align: "center",
           wordWrap: { width: chipWidth - Math.round(18 * contentScale) },
@@ -2140,15 +2271,7 @@ export class DraftStartMenu {
     this._updateFooterSummaryLayout(confirmWidth);
 
     if (this.ui.layoutInfoBody) {
-      this.ui.layoutInfoBody.setText("You may move buildings.\nKeep one land tile between buildings and water.");
-    }
-    if (this.ui.layoutInfoSelected) {
-      if (this.selectedPlacedBuilding) {
-        const meta = this._getBuildingMeta(this.selectedPlacedBuilding.typeKey ?? this.selectedPlacedBuilding.type?.name);
-        this.ui.layoutInfoSelected.setText(`${meta.emoji} ${meta.label} selected. Click an open tile.`);
-      } else {
-        this.ui.layoutInfoSelected.setText("Click a building, then click an open tile.");
-      }
+      this.ui.layoutInfoBody.setText(this._getLayoutInfoBodyText());
     }
     for (const entry of this.ui.layoutLegendRefs ?? []) {
       entry.count.setText(`x${this._countPlacedBuildings(entry.types)}`);

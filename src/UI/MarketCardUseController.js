@@ -530,6 +530,12 @@ function placeWallCells(scene, cells) {
     scene.rebuildBothNavMeshes?.();
     scene.zoomMixer?.buildOverviewTextureFromGrid?.(GameMap.grid, SQUARESIZE, (cell) => colorFor(cell));
   }
+  GameMap.regionSystem?.markDirty?.();
+  GameMap.regionDrawer?.markDirty?.();
+  GameMap.enemyRegionSystem?.markDirty?.();
+  GameMap.enemyRegionDrawer?.markDirty?.();
+  GameMap.enemyRegionSystem?.ensureUpToDate?.();
+  GameMap.siegePlanner = null;
   return { total: walls + doors, walls, doors };
 }
 

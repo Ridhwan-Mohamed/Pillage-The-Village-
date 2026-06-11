@@ -87,8 +87,8 @@ export class House {
         if (this.collider) this.collider.isBuilding = true;
 
         if(team == 1){
-            const cx = x + Math.floor(houseType.lenX/2);
-            const cy = y + Math.floor(houseType.lenY/2);
+            const cx = x + (houseType.lenX ?? 1) / 2;
+            const cy = y + (houseType.lenY ?? 1) / 2;
             // Vision bubble so nearby tiles are slightly brighter
             this.visionId = VisibilitySystem.addVisionBubble({ x: cx, y: cy, r: 6, boost: 0.10 });
             // Optional: small porch light (trim or remove if you don’t want light)

@@ -294,10 +294,17 @@ export class Turret {
     this._targetShotCounts?.set(target, this._getShotCount(target) + 1);
   }
 
+  _notifyAmmoStateChanged() {
+    try {
+      this.onAmmoStateChanged?.(this);
+    } catch {}
+  }
+
   _consumeAmmo() {
     if (!this._hasFiniteAmmo()) return;
     this.ammoRemaining = Math.max(0, Math.floor(Number(this.ammoRemaining || 0)) - 1);
     this.updateHealthBar();
+    this._notifyAmmoStateChanged();
     if (this.ammoRemaining > 0) return;
 
     showGhostText(this.scene, this.topSprite.x, this.topSprite.y - 28, "OUT", this.teamNumber, false, false, "#f8e7b0");
@@ -440,6 +447,7 @@ export class Turret {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    this._notifyAmmoStateChanged();
 
     Turret.instances.delete(this);
     this.currentTarget = null;

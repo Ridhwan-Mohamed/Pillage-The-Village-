@@ -1370,16 +1370,18 @@ static bindStructureLightAndVision(node, gx, gy, opts = {}) {
 
   const r = opts.r ?? 6;
   const boost = opts.boost ?? 0.1;
-  const intensity = opts.intensity ?? 1.0;
+  const brightness = opts.brightness ?? opts.intensity ?? 1.0;
+  const lenX = Math.max(1, Number(opts.lenX ?? opts.w ?? 1) || 1);
+  const lenY = Math.max(1, Number(opts.lenY ?? opts.h ?? 1) || 1);
 
-  const cx = gx + 0.5;
-  const cy = gy + 0.5;
+  const cx = Number(gx) + lenX / 2;
+  const cy = Number(gy) + lenY / 2;
 
   // clear old ids if re-binding
   WallPlacementController._removeStructureSourcesOn(node);
 
   node.__lightId = VisibilitySystem.addLightSource(
-    { x: cx, y: cy, r, intensity },
+    { x: cx, y: cy, r, brightness },
     true // noRepaint
   );
   lightSet.add(node.__lightId);

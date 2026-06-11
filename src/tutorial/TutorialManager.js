@@ -235,6 +235,18 @@ export class TutorialManager {
     return this.overlay;
   }
 
+  _getUiScene() {
+    return this.scene?.uiScene || this.uiScene || this.scene?.scene?.get?.("GameUIScene") || this.scene;
+  }
+
+  _getUiTimer() {
+    return this._getUiScene()?.time || this.scene?.time || null;
+  }
+
+  _getUiTweens() {
+    return this._getUiScene()?.tweens || this.scene?.tweens || null;
+  }
+
   _ensureTutorialResources() {
     const minimums = {
       money: 300,
@@ -521,7 +533,8 @@ export class TutorialManager {
   }
 
   _scheduleHighlightCall(step, delay, callback) {
-    const timer = this.scene.time?.delayedCall?.(delay, () => {
+    let timer = null;
+    timer = this._getUiTimer()?.delayedCall?.(delay, () => {
       this.scheduledHighlightCalls.delete(timer);
       if (!this.active || this.currentStep !== step) return;
       callback?.();
@@ -717,47 +730,73 @@ export class TutorialManager {
     });
   }
 
-  _findPlayerTownTower() {
+  _findPlayerTownTowers() {
     const towers = Teams.getTeam?.("1")?.townTowerList || [];
-    return towers.find((tower) =>
+    return towers.filter((tower) =>
       tower?.sprite?.active &&
       !tower._destroyed &&
       Math.max(0, Number(tower.health ?? 1)) > 0
-    ) || null;
+    );
   }
 
   _showTownTowerHighlight() {
-    const tower = this._findPlayerTownTower();
-    const sprite = tower?.sprite;
-    if (!sprite?.active) return;
+    const sprites = this._findPlayerTownTowers()
+      .map((tower) => tower?.sprite)
+      .filter((sprite) => sprite?.active && sprite.texture?.key);
+    if (!sprites.length) return;
 
-    this._focusWorldPoint(sprite.x, sprite.y, null, 520);
-
-    this.worldPulseTween?.remove?.();
-    this.worldPulse?.destroy?.(true);
-
-    const frameName = sprite.frame?.name;
-    const flash = this.scene.add.sprite(sprite.x, sprite.y, sprite.texture?.key, frameName)
-      .setOrigin(sprite.originX ?? 0.5, sprite.originY ?? 0.5)
-      .setDepth((sprite.depth ?? 0) + 6)
-      .setAlpha(0.72)
-      .setTintFill(0xffffff);
-    flash.setDisplaySize(sprite.displayWidth, sprite.displayHeight);
-    flash.setRotation(sprite.rotation || 0);
-    flash.setFlip?.(!!sprite.flipX, !!sprite.flipY);
-
-    const bounds = sprite.getBounds?.();
-    const outline = this.scene.add.graphics().setDepth((sprite.depth ?? 0) + 7);
-    if (bounds) {
-      outline.lineStyle(5, 0xffffff, 0.95);
-      outline.strokeRoundedRect(bounds.x - 8, bounds.y - 8, bounds.width + 16, bounds.height + 16, 8);
-      outline.lineStyle(2, 0xe0f2fe, 0.70);
-      outline.strokeRoundedRect(bounds.x - 14, bounds.y - 14, bounds.width + 28, bounds.height + 28, 12);
+    const focusSprites = sprites.filter((sprite) =>
+      Number.isFinite(Number(sprite.x)) && Number.isFinite(Number(sprite.y))
+    );
+    if (focusSprites.length) {
+      const focus = focusSprites.reduce((acc, sprite) => {
+        acc.x += Number(sprite.x);
+        acc.y += Number(sprite.y);
+        return acc;
+      }, { x: 0, y: 0 });
+      this._focusWorldPoint(focus.x / focusSprites.length, focus.y / focusSprites.length, null, 520);
     }
 
-    const group = this.scene.add.container(0, 0, [flash, outline]).setDepth((sprite.depth ?? 0) + 7);
+    this.worldPulseTween?.remove?.();
+    this.worldPulseTween = null;
+    this.worldPulse?.destroy?.(true);
+    this.worldPulse = null;
+
+    const children = [];
+    const entries = [];
+    let maxDepth = 0;
+
+    for (const sprite of sprites) {
+      const spriteDepth = Number(sprite.depth ?? 0);
+      maxDepth = Math.max(maxDepth, spriteDepth);
+      const frameName = sprite.frame?.name;
+      const flash = this.scene.add.sprite(sprite.x, sprite.y, sprite.texture.key, frameName)
+        .setOrigin(sprite.originX ?? 0.5, sprite.originY ?? 0.5)
+        .setAlpha(0.72)
+        .setTintFill(0xffffff);
+      flash.setDisplaySize(sprite.displayWidth, sprite.displayHeight);
+      flash.setRotation(sprite.rotation || 0);
+      flash.setFlip?.(!!sprite.flipX, !!sprite.flipY);
+
+      const outline = this.scene.add.graphics();
+      const entry = { sprite, flash, outline };
+      entry.redrawOutline = () => {
+        outline.clear();
+        const bounds = sprite.getBounds?.();
+        if (!bounds) return;
+        outline.lineStyle(5, 0xffffff, 0.95);
+        outline.strokeRoundedRect(bounds.x - 8, bounds.y - 8, bounds.width + 16, bounds.height + 16, 8);
+        outline.lineStyle(2, 0xe0f2fe, 0.70);
+        outline.strokeRoundedRect(bounds.x - 14, bounds.y - 14, bounds.width + 28, bounds.height + 28, 12);
+      };
+      entry.redrawOutline();
+      entries.push(entry);
+      children.push(flash, outline);
+    }
+
+    const group = this.scene.add.container(0, 0, children).setDepth(maxDepth + 7);
     this.worldPulse = group;
-    this.worldPulseTween = this.scene.tweens.add({
+    this.worldPulseTween = this._getUiTweens()?.add?.({
       targets: group,
       alpha: { from: 0.18, to: 1 },
       duration: 360,
@@ -765,10 +804,16 @@ export class TutorialManager {
       yoyo: true,
       repeat: -1,
       onUpdate: () => {
-        if (sprite?.active && flash?.active) {
-          flash.setPosition(sprite.x, sprite.y);
-          flash.setDisplaySize(sprite.displayWidth, sprite.displayHeight);
-          flash.setRotation(sprite.rotation || 0);
+        for (const entry of entries) {
+          const active = entry.sprite?.active && entry.flash?.active && entry.outline?.active;
+          entry.flash?.setVisible?.(!!active);
+          entry.outline?.setVisible?.(!!active);
+          if (!active) continue;
+          entry.flash.setPosition(entry.sprite.x, entry.sprite.y);
+          entry.flash.setDisplaySize(entry.sprite.displayWidth, entry.sprite.displayHeight);
+          entry.flash.setRotation(entry.sprite.rotation || 0);
+          entry.flash.setFlip?.(!!entry.sprite.flipX, !!entry.sprite.flipY);
+          entry.redrawOutline?.();
         }
       },
       onComplete: () => {

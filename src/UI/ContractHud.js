@@ -4,7 +4,7 @@ import { StageState } from "../parcelController/StageState.js";
 import { Teams } from "../Teams.js";
 import { makeButton } from "../parcelSpawn/ui/makeButton.js";
 import { formatPermitCostText, getContractPermitCost } from "../permitSystem.js";
-import { hasStoreUnlock, STORE_UNLOCK_KEYS } from "../parcel_system/StoreUnlockSystem.js";
+import { hasDemoCompleted, hasStoreUnlock, STORE_UNLOCK_KEYS } from "../parcel_system/StoreUnlockSystem.js";
 import { getContractMoneyCost } from "../balance/GameBalance.js";
 import {
   getSlotFavorConfig,
@@ -293,7 +293,7 @@ export class ContractHud {
   }
 
   _canAccessMilitia() {
-    return this._isMilitiaUnlocked() && this._getTownLevel() >= 3;
+    return this._isMilitiaUnlocked() && (this._getTownLevel() >= 3 || hasDemoCompleted());
   }
 
   _showMilitiaLockedMessage() {

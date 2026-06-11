@@ -93,7 +93,7 @@ import smokeClearing from 'url:./assets/smoke_clearing.png'
 import gunslingerBullet from 'url:./assets/weapons/gunslinger_bullet.png'
 import hunterBullet from 'url:./assets/weapons/hunter_bullet.png'
 import turretBullet from 'url:./assets/weapons/turret_bullet.png'
-import hitEffect from 'url:./assets/weapons/hit_effect.png'
+import hitEffect from 'url:./assets/weapons/hit_effect_tintable.png'
 
 export class itemTab extends Phaser.Scene {
 

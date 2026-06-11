@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CONTROL_STATES, showGhostText, SQUARESIZE, TILE_TYPES } from "./constants";
+import { CONTROL_STATES, showGhostText, SQUARESIZE, TILE_TYPES, UIDEPTH } from "./constants";
 import { Map } from "./map";
 import { fightManager } from "./Manager/fightManager";
 import { Player } from "./players/Player";
@@ -8,6 +8,12 @@ import { buildingManager } from "./Manager/buildingManager";
 import { AudioManager } from "./Manager/AudioManager";
 import { CombatSpacingCoordinator } from "./ai/CombatSpacingCoordinator";
 import { playSmokeClearing } from "./FX/SmokeClearing";
+
+const TEAM_HIT_EFFECT_TINTS = {
+    0: 0xff4d3d,
+    1: 0x44ff44,
+};
+const HIT_EFFECT_DEPTH = (UIDEPTH ?? 10) + 140;
 
 export class Projectile {
     static scene;
@@ -49,8 +55,13 @@ export class Projectile {
         }
         Projectile.projectileGroup.add(newCube);
         newCube.body.dontTrack = true;
+        newCube.body.pushable = false;
+        newCube.body.setImmovable?.(true);
         newCube.team = teamNumber;
         newCube.weapon = weapon;
+        newCube._shotOriginX = x;
+        newCube._shotOriginY = y;
+        newCube._travelAngle = angle;
         if(player) newCube.player = player;
         if (options?.sourceStructure) newCube.sourceStructure = options.sourceStructure;
 
@@ -84,22 +95,164 @@ export class Projectile {
             Projectile.scene.anims.create({
                 key: "weapon_hit_effect_anim",
                 frames: Projectile.scene.anims.generateFrameNumbers("weapon_hit_effect", { start: 0, end: 2 }),
-                frameRate: 18,
+                frameRate: 12,
                 repeat: 0,
             });
         }
         return true;
     }
 
-    static playHitEffect(x, y, { scale = 1, angle = 0 } = {}) {
-        if (!Projectile.scene?.textures?.exists?.("weapon_hit_effect")) return;
+    static normalizeTint(value) {
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value !== "string") return null;
+
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+
+        if (/^\d+$/.test(trimmed)) return Number(trimmed);
+
+        const hex = trimmed.startsWith("#")
+            ? trimmed.slice(1)
+            : trimmed.startsWith("0x")
+                ? trimmed.slice(2)
+                : null;
+
+        if (!hex || !/^[0-9a-f]+$/i.test(hex)) return null;
+        return Number.parseInt(hex, 16);
+    }
+
+    static getProjectileImpactTint(projectile) {
+        const teamTint = TEAM_HIT_EFFECT_TINTS[Number(projectile?.team)];
+        const candidates = [
+            projectile?.weapon?.hitEffectTint,
+            projectile?.weapon?.projectileTrailColor,
+            projectile?.hitEffectTint,
+            teamTint,
+            0xffffff,
+        ];
+
+        for (const value of candidates) {
+            const tint = Projectile.normalizeTint(value);
+            if (tint != null) return tint;
+        }
+        return 0xffffff;
+    }
+
+    static getProjectileSourcePoint(projectile) {
+        const source = projectile?.player
+            ?? projectile?.sourceStructure?.topSprite
+            ?? projectile?.sourceStructure?.sprite
+            ?? projectile?.sourceStructure?.baseSprite
+            ?? projectile?.sourceStructure;
+
+        const x = Number(source?.x ?? projectile?._shotOriginX);
+        const y = Number(source?.y ?? projectile?._shotOriginY);
+        return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+    }
+
+    static getProjectileImpactAngle(projectile, x, y) {
+        const vx = Number(projectile?.body?.velocity?.x ?? 0);
+        const vy = Number(projectile?.body?.velocity?.y ?? 0);
+        if (Math.hypot(vx, vy) > 0.01) return Math.atan2(vy, vx);
+
+        const travelAngle = Number(projectile?._travelAngle);
+        if (Number.isFinite(travelAngle)) return travelAngle;
+
+        const source = Projectile.getProjectileSourcePoint(projectile);
+        if (source) return Phaser.Math.Angle.Between(source.x, source.y, x, y);
+
+        const rotation = Number(projectile?.rotation);
+        return Number.isFinite(rotation) ? rotation : 0;
+    }
+
+    static playFallbackHitEffect(x, y, { scale = 1, angle = 0, tint = 0xffffff } = {}) {
+        const scene = Projectile.scene;
+        if (!scene?.add) return;
+
+        const normalizedTint = Projectile.normalizeTint(tint) ?? 0xffffff;
+        const root = scene.add.container(x, y)
+            .setDepth(HIT_EFFECT_DEPTH)
+            .setRotation(angle)
+            .setAlpha(0.95);
+        const gfx = scene.add.graphics();
+        const size = Math.max(8, 12 * scale);
+        const stroke = Math.max(1.5, 2.5 * scale);
+
+        gfx.lineStyle(stroke, normalizedTint, 0.95);
+        gfx.beginPath();
+        gfx.moveTo(-size, 0);
+        gfx.lineTo(size, 0);
+        gfx.moveTo(0, -size * 0.65);
+        gfx.lineTo(0, size * 0.65);
+        gfx.strokePath();
+        gfx.lineStyle(Math.max(1, stroke * 0.55), 0xffffff, 0.5);
+        gfx.strokeCircle(0, 0, size * 0.45);
+        root.add(gfx);
+
+        scene.tweens.add({
+            targets: root,
+            scale: 1.45,
+            alpha: 0,
+            duration: 260,
+            ease: "Sine.easeOut",
+            onComplete: () => root.destroy(),
+        });
+    }
+
+    static playHitEffect(x, y, { scale = 1, angle = 0, tint = 0xffffff } = {}) {
+        if (!Projectile.scene?.textures?.exists?.("weapon_hit_effect")) {
+            Projectile.playFallbackHitEffect(x, y, { scale, angle, tint });
+            return;
+        }
         Projectile.ensureWeaponEffectAnimations();
         const fx = Projectile.scene.add.sprite(x, y, "weapon_hit_effect", 0)
-            .setDepth((TILE_TYPES.turret.depth ?? 10) + 16)
-            .setScale(scale)
-            .setRotation(angle);
-        fx.play("weapon_hit_effect_anim");
-        fx.once("animationcomplete", () => fx.destroy());
+            .setDepth(HIT_EFFECT_DEPTH)
+            .setScale(scale * 1.35)
+            .setRotation(angle)
+            .setAlpha(1)
+            .setBlendMode(Phaser.BlendModes.ADD);
+
+        const normalizedTint = Projectile.normalizeTint(tint);
+        if (normalizedTint != null) {
+            if (typeof fx.setTintFill === "function") fx.setTintFill(normalizedTint);
+            else fx.setTint(normalizedTint);
+        }
+
+        const animExists = Projectile.scene.anims?.exists?.("weapon_hit_effect_anim");
+        if (animExists) {
+            fx.play("weapon_hit_effect_anim");
+            fx.once("animationcomplete", () => {
+                Projectile.scene?.tweens?.add({
+                    targets: fx,
+                    alpha: 0,
+                    scaleX: fx.scaleX * 1.12,
+                    scaleY: fx.scaleY * 1.12,
+                    duration: 80,
+                    ease: "Sine.easeOut",
+                    onComplete: () => fx.destroy(),
+                });
+            });
+        } else {
+            Projectile.scene?.tweens?.add({
+                targets: fx,
+                alpha: 0,
+                duration: 260,
+                ease: "Sine.easeOut",
+                onComplete: () => fx.destroy(),
+            });
+        }
+    }
+
+    static playProjectileImpact(projectile, x, y, { scaleMultiplier = 1, angle = null } = {}) {
+        if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return;
+        const baseScale = Number(projectile?.weapon?.hitEffectScale ?? 1.1);
+        Projectile.playHitEffect(Number(x), Number(y), {
+            scale: Math.max(0.1, baseScale * scaleMultiplier),
+            angle: Number.isFinite(Number(angle))
+                ? Number(angle)
+                : Projectile.getProjectileImpactAngle(projectile, Number(x), Number(y)),
+            tint: Projectile.getProjectileImpactTint(projectile),
+        });
     }
 
     static startProjectileTrail(projectile, weapon) {
@@ -480,6 +633,67 @@ export class Projectile {
         return new Phaser.Geom.Rectangle(left - pad, top - pad, width + pad * 2, height + pad * 2);
     }
 
+    static getRectSides(rect) {
+        if (!rect) return null;
+        const left = Number.isFinite(rect.left) ? rect.left : rect.x;
+        const right = Number.isFinite(rect.right) ? rect.right : rect.x + rect.width;
+        const top = Number.isFinite(rect.top) ? rect.top : rect.y;
+        const bottom = Number.isFinite(rect.bottom) ? rect.bottom : rect.y + rect.height;
+
+        if (![left, right, top, bottom].every(Number.isFinite)) return null;
+        return { left, right, top, bottom };
+    }
+
+    static getClosestPointOnRectFacingPoint(rect, point) {
+        const sides = Projectile.getRectSides(rect);
+        if (!sides || !point) return null;
+
+        const { left, right, top, bottom } = sides;
+        const x = Number(point.x);
+        const y = Number(point.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+        let closestX = Phaser.Math.Clamp(x, left, right);
+        let closestY = Phaser.Math.Clamp(y, top, bottom);
+
+        if (x >= left && x <= right && y >= top && y <= bottom) {
+            const distances = [
+                { edge: "left", value: x - left },
+                { edge: "right", value: right - x },
+                { edge: "top", value: y - top },
+                { edge: "bottom", value: bottom - y },
+            ].sort((a, b) => a.value - b.value);
+
+            switch (distances[0]?.edge) {
+                case "left":
+                    closestX = left;
+                    break;
+                case "right":
+                    closestX = right;
+                    break;
+                case "top":
+                    closestY = top;
+                    break;
+                case "bottom":
+                    closestY = bottom;
+                    break;
+            }
+        }
+
+        return { x: closestX, y: closestY };
+    }
+
+    static getStructureImpactPoint(projectile, hit) {
+        const fallbackX = Number(projectile?.x ?? hit?.x ?? 0);
+        const fallbackY = Number(projectile?.y ?? hit?.y ?? 0);
+        const fallback = { x: fallbackX, y: fallbackY };
+        const bounds = Projectile.getStructureBounds(hit);
+        if (!bounds) return fallback;
+
+        const source = Projectile.getProjectileSourcePoint(projectile) ?? fallback;
+        return Projectile.getClosestPointOnRectFacingPoint(bounds, source) ?? fallback;
+    }
+
     static leadAndAngle(attacker, target, projectileSpeed) {
         if (!target.body) return { x: target.x, y: target.y };
 
@@ -526,10 +740,7 @@ export class Projectile {
             fightManager.applyHitReaction(target, attacker, projectile.weapon);
 
             target.health = Math.max(0, target.health - result.damage);
-            Projectile.playHitEffect(target.x, target.y - 6, {
-                scale: projectile.weapon?.hitEffectScale ?? 1,
-                angle: Phaser.Math.Angle.Between(projectile.x, projectile.y, target.x, target.y),
-            });
+            Projectile.playProjectileImpact(projectile, target.x, target.y - 6);
 
             if (target.health <= 0) {
                 fightManager.checkForKillReward(projectile.team, target);
@@ -583,7 +794,13 @@ export class Projectile {
             return;
         }
 
+        const impactPoint = Projectile.getStructureImpactPoint(projectile, hit);
+        const playStructureImpact = (scaleMultiplier = 1) => {
+            Projectile.playProjectileImpact(projectile, impactPoint.x, impactPoint.y, { scaleMultiplier });
+        };
+
         if (Projectile.isFriendlyStructureHit(projectile, hit)) {
+            playStructureImpact(0.82);
             projectile.destroy();
             return;
         }
@@ -595,17 +812,18 @@ export class Projectile {
         // MISS -> text + kill bullet
         if (!result.hit) {
             // best-effort text anchor
-            const hx = hit?.x ?? projectile.x;
-            const hy = hit?.y ?? projectile.y;
+            const hx = impactPoint.x;
+            const hy = impactPoint.y;
 
+            playStructureImpact(0.78);
             showGhostText(
-            Projectile.scene,
-            hx,
-            hy - 10,
-            "MISS",
-            projectile.team,
-            false,
-            true
+                Projectile.scene,
+                hx,
+                hy - 10,
+                "MISS",
+                projectile.team,
+                false,
+                true
             );
 
             projectile.destroy();
@@ -626,6 +844,7 @@ export class Projectile {
             const t = shooter?.task;
 
             // fallback: if you have wall HP system, use it
+            playStructureImpact();
             const destroyed = wall.damage(dmg);
             
             if (destroyed) {
@@ -653,6 +872,7 @@ export class Projectile {
             const building = hit.buildingRef;
 
             const t = shooter?.task;
+            playStructureImpact();
 
             if (shooter && t) {
                 const damageResult = buildingManager.applyDestroyDamage(t, dmg);
@@ -666,12 +886,12 @@ export class Projectile {
 
             // No task: treat as normal "damage building health" path if present
             if (typeof building.takeDamage === "function") {
-            building.takeDamage(dmg);
+                building.takeDamage(dmg);
             } else if (typeof building.onDamaged === "function") {
-            // if you store real health, you’d pass current/max; here best-effort:
-            building.onDamaged(dmg, Math.max(0, (building.health ?? 0) - dmg), building.maxHealth ?? building.health ?? 1);
-            building.health = Math.max(0, (building.health ?? 0) - dmg);
-            if (building.health <= 0 && typeof building.destroy === "function") building.destroy();
+                // if you store real health, you’d pass current/max; here best-effort:
+                building.onDamaged(dmg, Math.max(0, (building.health ?? 0) - dmg), building.maxHealth ?? building.health ?? 1);
+                building.health = Math.max(0, (building.health ?? 0) - dmg);
+                if (building.health <= 0 && typeof building.destroy === "function") building.destroy();
             }
 
             projectile.destroy();
@@ -679,6 +899,7 @@ export class Projectile {
         }
 
         // unknown structure collider
+        playStructureImpact(0.82);
         projectile.destroy();
     }
 }

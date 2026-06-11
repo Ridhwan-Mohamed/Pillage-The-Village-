@@ -34,7 +34,7 @@ import { buildPolysFromGridMap } from './lib/navmesh/map-parsers/build-polys-fro
 import { StageState } from './parcelController/StageState.js';
 import { paintOverviewTexture } from './UI/OverviewStylePainter.js';
 import { getRunStoreUnlockKeys, grantHordeUnlockCatchup } from './parcel_system/HordeUnlockTrack.js';
-import { resetStoreUnlocks } from './parcel_system/StoreUnlockSystem.js';
+import { grantDemoCompletionStoreUnlocks, hasDemoCompleted, resetStoreUnlocks } from './parcel_system/StoreUnlockSystem.js';
 import { SaveManager } from './save/SaveManager.js';
 import { prepareSnapshotWorldForBoot } from './save/RunSnapshotLoader.js';
 import { resetCardModifiedDefaults } from './save/saveAdapters.js';
@@ -97,6 +97,7 @@ export class MainMenu {
             Map.navGrid = typeof structuredClone === 'function'
                 ? structuredClone(savedNavGrid)
                 : JSON.parse(JSON.stringify(savedNavGrid));
+            Map.bumpNavGridRevision?.("saved_nav_grid_loaded");
             return Map.navGrid;
         }
 
@@ -105,6 +106,7 @@ export class MainMenu {
         }
 
         Map.navGrid = MainMenu._buildNavGridFromGridData(scene?.gridData);
+        Map.bumpNavGridRevision?.("nav_grid_built_from_scene");
         return Map.navGrid;
     }
 
@@ -123,7 +125,7 @@ export class MainMenu {
         scene.keyboardSpeed = 10;
         scene.parcelSpawnUI?.setMode?.("detailed");
         scene.parcelSpawnUI?.setVisible?.(true);
-        if (!Map.hasDetailedWorldElements?.()) {
+        if (Map._detailedWorldDirty || !Map.hasDetailedWorldElements?.()) {
             Map.reDraw?.();
         }
         Map.setDetailedWorldPaused?.(false);
@@ -310,7 +312,14 @@ export class MainMenu {
         const plate = overlayScene.add.circle(0, 0, 24, opts.plateColor ?? 0x0b1b29, 0.92)
             .setStrokeStyle(2, 0xf4fbff, 0.24);
         const shine = overlayScene.add.circle(-7, -8, 8, 0xffffff, 0.1);
-        const art = overlayScene.add.image(0, 0, opts.artKey ?? 'itchLinkIcon').setOrigin(0.5);
+        const art = opts.text
+            ? overlayScene.add.text(0, 0, String(opts.text), {
+                fontSize: '32px',
+                fontFamily: '"Segoe UI Emoji", "Apple Color Emoji", sans-serif',
+                stroke: '#06111a',
+                strokeThickness: 3,
+            }).setOrigin(0.5)
+            : overlayScene.add.image(0, 0, opts.artKey ?? 'itchLinkIcon').setOrigin(0.5);
         const hit = overlayScene.add
             .rectangle(0, 0, 56, 56, 0xffffff, 0.001)
             .setInteractive({ useHandCursor: true });
@@ -975,6 +984,7 @@ export class MainMenu {
         scene.startButton = null;
         scene.continueButton = null;
         scene.itchButton = null;
+        scene.crownButton = null;
         scene.versionText = null;
         scene._mainMenuHoverCaption?._typingEvent?.remove?.(false);
         scene._mainMenuHoverCaption = null;
@@ -1023,12 +1033,12 @@ export class MainMenu {
         const parallaxEdgeLayer = overlayScene.add.container(0, 0);
         const logo = overlayScene.add.image(centerX, logoY, 'logo').setOrigin(0.5).setScale(logoScale);
         const versionText = overlayScene.add.text(overlayScene.scale.width - 95, overlayScene.scale.height - 20, 'v0.9.9', {
-            fontSize: '28px',
-            fill: '#ffffff',
+            fontSize: '22px',
+            fill: '#e9fbff',
             fontStyle: 'bold',
             fontFamily: 'Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif',
-            stroke: '#071320',
-            strokeThickness: 4,
+            stroke: '#03111c',
+            strokeThickness: 6,
         }).setOrigin(1,1);
 
         const continueMeta = SaveManager.getRunSaveMeta();
@@ -1061,6 +1071,21 @@ export class MainMenu {
             hoverScaleFactor: 1.18,
             hoverAngleRange: 6,
         });
+        const crownButton = hasDemoCompleted()
+            ? MainMenu._createMainMenuIconButton(overlayScene, 0, 0, {
+                text: '👑',
+                sizeFactor: 0.03,
+                minSize: 34,
+                maxSize: 46,
+                hoverLift: 4,
+                hoverScaleFactor: 1.16,
+                hoverAngleRange: 5,
+                glowColor: 0xffd166,
+                plateColor: 0x172033,
+                glowBaseAlpha: 0.18,
+                glowHoverAlpha: 0.38,
+            })
+            : null;
         const hoverCaption = MainMenu._createMenuHoverCaption(overlayScene, centerX, 0);
 
         startButton._menuHoverKey = 'start';
@@ -1075,6 +1100,10 @@ export class MainMenu {
         }
         itchButton._menuHoverKey = 'itch';
         itchButton._menuHoverText = 'A game by badbaado';
+        if (crownButton) {
+            crownButton._menuHoverKey = 'demo-crown';
+            crownButton._menuHoverText = 'You beat the demo!';
+        }
         let newRunPrompt = null;
         let restartLogoIdleTweens = (_opts = {}) => {};
         const parallaxState = {
@@ -1191,7 +1220,7 @@ export class MainMenu {
             const versionPadY = Phaser.Math.Clamp(Math.round(height * 0.02), 12, 20);
             const versionSafeLeft = Phaser.Math.Clamp(Math.round(width * 0.035), 16, 32);
             const versionParallaxBleed = 14;
-            const versionTargetFontSize = 28;
+            const versionTargetFontSize = 22;
             const topPad = Phaser.Math.Clamp(Math.round(Math.min(width, height) * 0.055), 30, 44);
 
             logo.setPosition(centerX, logoY).setScale(logoScale);
@@ -1217,15 +1246,24 @@ export class MainMenu {
             continueButton && (continueButton._baseY = continueButtonY);
             itchButton._baseX = topPad;
             itchButton._baseY = topPad;
+            if (crownButton) {
+                crownButton._baseX = width - topPad;
+                crownButton._baseY = topPad;
+            }
 
             MainMenu._layoutMainMenuImageButton(startButton, overlayScene);
             MainMenu._layoutMainMenuImageButton(continueButton, overlayScene);
             MainMenu._layoutMainMenuIconButton(itchButton, overlayScene);
+            MainMenu._layoutMainMenuIconButton(crownButton, overlayScene);
             MainMenu._layoutMenuHoverCaption(hoverCaption, overlayScene);
 
             if (immediate) {
                 applyButtonHoverPositions(true);
                 itchButton.setPosition(itchButton._baseX, itchButton._baseY - (itchButton._isHovered ? Number(itchButton._hoverLift ?? 4) : 0));
+                crownButton?.setPosition(
+                    crownButton._baseX,
+                    crownButton._baseY - (crownButton._isHovered ? Number(crownButton._hoverLift ?? 4) : 0)
+                );
             } else {
                 applyButtonHoverPositions(false);
                 overlayScene.tweens.killTweensOf(itchButton);
@@ -1236,6 +1274,16 @@ export class MainMenu {
                     duration: 180,
                     ease: 'Quad.easeOut',
                 });
+                if (crownButton) {
+                    overlayScene.tweens.killTweensOf(crownButton);
+                    overlayScene.tweens.add({
+                        targets: crownButton,
+                        x: crownButton._baseX,
+                        y: crownButton._baseY - (crownButton._isHovered ? Number(crownButton._hoverLift ?? 4) : 0),
+                        duration: 180,
+                        ease: 'Quad.easeOut',
+                    });
+                }
             }
 
             if (scene._menuRevealFxNodes) {
@@ -1272,7 +1320,7 @@ export class MainMenu {
         parallaxFarLayer.add([logo]);
         parallaxMidLayer.add([hoverCaption]);
         parallaxNearLayer.add([startButton, ...(continueButton ? [continueButton] : [])]);
-        parallaxEdgeLayer.add([itchButton, versionText]);
+        parallaxEdgeLayer.add([itchButton, ...(crownButton ? [crownButton] : []), versionText]);
         menu.add([parallaxFarLayer, parallaxMidLayer, parallaxNearLayer, parallaxEdgeLayer]);
         syncMainMenuLayout({ immediate: true });
 
@@ -1282,6 +1330,7 @@ export class MainMenu {
         scene.startButton = startButton;
         scene.continueButton = continueButton;
         scene.itchButton = itchButton;
+        scene.crownButton = crownButton;
         scene.versionText = versionText;
         scene._mainMenuHoverCaption = hoverCaption;
         scene._mainMenuResizeOverlayScene = overlayScene;
@@ -1321,6 +1370,7 @@ export class MainMenu {
             logo.setY(logoY + 16).setScale(logoScale * 0.92);
             startButton.setY(startButtonY + 24).setScale(0.9).setAlpha(0);
             continueButton?.setY(continueButtonY + 16).setScale(0.9).setAlpha(0);
+            crownButton?.setY((crownButton._baseY ?? 40) - 10).setScale(0.9).setAlpha(0);
             versionText.setY(overlayScene.scale.height - 8).setAlpha(0);
 
             overlayScene.tweens.add({
@@ -1358,6 +1408,18 @@ export class MainMenu {
                     scaleY: 1,
                     duration: 520,
                     delay: 290,
+                    ease: 'Back.easeOut',
+                });
+            }
+            if (crownButton) {
+                overlayScene.tweens.add({
+                    targets: crownButton,
+                    alpha: 1,
+                    y: crownButton._baseY ?? 40,
+                    scaleX: 1,
+                    scaleY: 1,
+                    duration: 420,
+                    delay: 310,
                     ease: 'Back.easeOut',
                 });
             }
@@ -1518,10 +1580,11 @@ export class MainMenu {
                 startButton?.buttonHit?.setInteractive?.({ useHandCursor: true });
                 continueButton?.buttonHit?.setInteractive?.({ useHandCursor: true });
                 itchButton?.buttonHit?.setInteractive?.({ useHandCursor: true });
+                crownButton?.buttonHit?.setInteractive?.({ useHandCursor: true });
                 return;
             }
             MainMenu._hideMenuHoverCaption(hoverCaption);
-            for (const button of [startButton, continueButton, itchButton].filter(Boolean)) {
+            for (const button of [startButton, continueButton, itchButton, crownButton].filter(Boolean)) {
                 button._isHovered = false;
                 button._hoverTween?.remove?.();
                 button._hoverTween = null;
@@ -1536,9 +1599,11 @@ export class MainMenu {
             }
             applyButtonHoverPositions(true);
             itchButton.setPosition(itchButton._baseX ?? itchButton.x, itchButton._baseY ?? itchButton.y).setAngle(0);
+            crownButton?.setPosition(crownButton._baseX ?? crownButton.x, crownButton._baseY ?? crownButton.y)?.setAngle?.(0);
             startButton?.buttonHit?.disableInteractive?.();
             continueButton?.buttonHit?.disableInteractive?.();
             itchButton?.buttonHit?.disableInteractive?.();
+            crownButton?.buttonHit?.disableInteractive?.();
         };
 
         const destroyNewRunPrompt = ({ restoreButtons = true } = {}) => {
@@ -1668,6 +1733,12 @@ export class MainMenu {
             overlayScene.tweens.killTweensOf(itchButton);
             overlayScene.tweens.killTweensOf(itchButton.buttonArt);
             if (itchButton.buttonGlow) overlayScene.tweens.killTweensOf(itchButton.buttonGlow);
+            crownButton?._hoverTween?.remove?.();
+            if (crownButton) {
+                overlayScene.tweens.killTweensOf(crownButton);
+                overlayScene.tweens.killTweensOf(crownButton.buttonArt);
+                if (crownButton.buttonGlow) overlayScene.tweens.killTweensOf(crownButton.buttonGlow);
+            }
             overlayScene.tweens.killTweensOf(hoverCaption);
             overlayScene.tweens.killTweensOf(hoverCaption.bg);
             overlayScene.tweens.killTweensOf(versionText);
@@ -1690,7 +1761,7 @@ export class MainMenu {
                 }
             });
             overlayScene.tweens.add({
-                targets: [startButton, continueButton, itchButton, hoverCaption].filter(Boolean),
+                targets: [startButton, continueButton, itchButton, crownButton, hoverCaption].filter(Boolean),
                 alpha: 0,
                 scaleX: 0.9,
                 scaleY: 0.9,
@@ -1699,6 +1770,7 @@ export class MainMenu {
                     startButton.destroy();
                     continueButton?.destroy?.();
                     itchButton.destroy();
+                    crownButton?.destroy?.();
                     hoverCaption.destroy();
                 }
             });
@@ -1737,6 +1809,7 @@ export class MainMenu {
         attachButtonHover(startButton);
         attachButtonHover(continueButton);
         attachButtonHover(itchButton);
+        attachButtonHover(crownButton);
 
         itchButton.buttonHit.on('pointerdown', () => {
             AudioManager.playMenuClick();
@@ -1806,6 +1879,7 @@ export class MainMenu {
         const tex = scene.textures.createCanvas(texKey, srcW, srcH);
         const ctx = tex.getContext();
 
+        let navChangedForResources = false;
         for (let y = 0; y < srcH; y++) {
             for (let x = 0; x < srcW; x++) {
                 let value;
@@ -1816,12 +1890,16 @@ export class MainMenu {
                     for(let i = y; i < y + type.lenY; i++){
                         for(let j = x; j < x + type.lenX; j++){
                             scene.gridData[i][j] = [TILE_TYPES.grass.grid, type.grid]
-                            if(type.block) Map.navGrid[i][j] = 0;
+                            if(type.block && Map.navGrid?.[i]?.[j] !== undefined) {
+                                navChangedForResources = navChangedForResources || Map.navGrid[i][j] !== 0;
+                                Map.navGrid[i][j] = 0;
+                            }
                         }
                     }
                 }
             }
         }
+        if (navChangedForResources) Map.bumpNavGridRevision?.("map_resource_nav_blocks");
 
         paintOverviewTexture(
             ctx,
@@ -2456,6 +2534,7 @@ export class MainMenu {
 
             // ✅ NEW: enemy grid (dupe) + enemy mesh (dupe) + enemy updater + enemy registry
             Map.enemyNavGrid = Map.navGrid.map(row => row.slice());
+            Map.bumpNavGridRevision?.("enemy_nav_grid_initialized");
             // deep-clone polys so edits to enemy mesh don't mutate player mesh
             const enemyPolys = (typeof structuredClone === "function")
             ? structuredClone(polys)
@@ -2575,13 +2654,17 @@ export class MainMenu {
                 buildingManager.NavMeshUpdater = this.navMeshUpdater;
                 blockResourceManager.NavMeshUpdater = this.navMeshUpdater;
                 blockResourceManager.EnemyNavMeshUpdater = this.enemyNavMeshUpdater;
+                Map.bumpNavGridRevision?.("nav_meshes_rebuilt");
             };
-            scene.prepareParcelNavMeshesAsync = function prepareParcelNavMeshesAsync({ navGrid, enemyNavGrid } = {}) {
+            scene.prepareParcelNavMeshesAsync = function prepareParcelNavMeshesAsync({ navGrid, enemyNavGrid, navGridRevision = null } = {}) {
                 if (!Array.isArray(navGrid) || !Array.isArray(navGrid[0])) {
                     return Promise.reject(new Error("Missing player nav grid"));
                 }
 
                 const requestId = `parcel_nav_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+                const preparedFromRevision = navGridRevision != null && Number.isFinite(Number(navGridRevision))
+                    ? Number(navGridRevision)
+                    : (Map.getNavGridRevision?.() ?? 0);
                 return new Promise((resolve, reject) => {
                     const parcelWorker = new Worker(new URL('./workers/navMeshWorker.js', import.meta.url), { type: 'module' });
                     const timeout = window.setTimeout(() => {
@@ -2603,6 +2686,7 @@ export class MainMenu {
                         resolve({
                             navPolys: polys,
                             enemyPolys: enemyPolys || polys,
+                            navGridRevision: preparedFromRevision,
                         });
                     };
 
@@ -2617,6 +2701,7 @@ export class MainMenu {
                         requestId,
                         navGrid,
                         enemyNavGrid: Array.isArray(enemyNavGrid) ? enemyNavGrid : navGrid,
+                        navGridRevision: preparedFromRevision,
                     });
                 });
             };
@@ -2627,8 +2712,48 @@ export class MainMenu {
                 enemyNavGrid,
                 bounds,
                 refreshOpts = {},
+                navGridRevision = null,
+                commitBaseRevision = null,
             } = {}) {
                 if (!Array.isArray(navPolys) || !Array.isArray(navGrid) || !Array.isArray(navGrid[0])) {
+                    return false;
+                }
+
+                const toRevision = (value) => {
+                    if (value == null) return null;
+                    const revision = Number(value);
+                    return Number.isFinite(revision) ? revision : null;
+                };
+                const preparedRevision = toRevision(navGridRevision);
+                const baseRevision = toRevision(commitBaseRevision) ?? (Map.getNavGridRevision?.() ?? 0);
+                if (preparedRevision != null && baseRevision !== preparedRevision) {
+                    console.warn("Skipped stale parcel navmesh apply.", {
+                        preparedRevision,
+                        commitBaseRevision: baseRevision,
+                        currentRevision: Map.getNavGridRevision?.() ?? null,
+                        bounds,
+                    });
+                    return false;
+                }
+
+                const mapH = Map.grid?.length ?? 0;
+                const mapW = mapH ? (Map.grid?.[0]?.length ?? 0) : 0;
+                const navH = navGrid.length;
+                const navW = navGrid[0]?.length ?? 0;
+                const resolvedEnemyNavGrid = Array.isArray(enemyNavGrid) ? enemyNavGrid : navGrid.map(row => row.slice());
+                const enemyNavH = resolvedEnemyNavGrid.length;
+                const enemyNavW = resolvedEnemyNavGrid[0]?.length ?? 0;
+                if (
+                    (mapH > 0 && mapW > 0 && (navH !== mapH || navW !== mapW)) ||
+                    enemyNavH !== navH ||
+                    enemyNavW !== navW
+                ) {
+                    console.warn("Skipped parcel navmesh apply with incompatible grid dimensions.", {
+                        map: { width: mapW, height: mapH },
+                        nav: { width: navW, height: navH },
+                        enemyNav: { width: enemyNavW, height: enemyNavH },
+                        bounds,
+                    });
                     return false;
                 }
 
@@ -2642,7 +2767,8 @@ export class MainMenu {
                 this.enemyNavMeshUpdater?.destroy?.();
 
                 Map.navGrid = navGrid;
-                Map.enemyNavGrid = Array.isArray(enemyNavGrid) ? enemyNavGrid : navGrid.map(row => row.slice());
+                Map.enemyNavGrid = resolvedEnemyNavGrid;
+                Map.bumpNavGridRevision?.("prepared_nav_meshes_applied");
 
                 const assignParcelTags = (mesh) => {
                     const polygons = mesh?.getPolygons?.() || [];
@@ -2878,6 +3004,9 @@ export class MainMenu {
                     completedHordes: 0,
                 };
                 resetStoreUnlocks(getRunStoreUnlockKeys(), scene);
+                if (hasDemoCompleted()) {
+                    grantDemoCompletionStoreUnlocks(scene);
+                }
                 const catchupUnlocks = grantHordeUnlockCatchup(scene, endlessStart.completedHordes);
                 scene.clock?.setDay?.(endlessStart.day ?? 1);
                 if (catchupUnlocks.length) {

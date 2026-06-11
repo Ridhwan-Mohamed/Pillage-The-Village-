@@ -7,7 +7,14 @@ import { FarmBushNode } from "../buildings/FarmBushNode.js";
 import { PineTree } from "../buildings/pineTree.js";
 import { RockNode } from "../buildings/RockNode.js";
 import { StageState } from "../parcelController/StageState.js";
-import { STORE_UNLOCK_KEYS, getStoreUnlockSnapshot, unlockStoreItem, resetStoreUnlocks } from "../parcel_system/StoreUnlockSystem.js";
+import {
+  STORE_UNLOCK_KEYS,
+  getStoreUnlockSnapshot,
+  grantDemoCompletionStoreUnlocks,
+  hasDemoCompleted,
+  unlockStoreItem,
+  resetStoreUnlocks,
+} from "../parcel_system/StoreUnlockSystem.js";
 import { grantHordeUnlockCatchup } from "../parcel_system/HordeUnlockTrack.js";
 import { POWERUP_CARDS } from "../Cards/PowerupCards.js";
 import { clearBuildingArray, buildingArray, townBounds, townRoads, spawnPoints } from "../town.js";
@@ -127,6 +134,9 @@ function syncStoreUnlocks(scene, unlockKeys = [], snapshot = null) {
     Number(snapshot?.progression?.stageState?.stageIndex || 1) - 1
   );
   grantHordeUnlockCatchup(scene, completedHordes);
+  if (hasDemoCompleted()) {
+    grantDemoCompletionStoreUnlocks(scene);
+  }
 }
 
 function restoreBuildingState(building, saved) {

@@ -1,4 +1,4 @@
-import { SQUARESIZE, FLOORDEPTH, WORLD_DIMENSIONX, WORLD_DIMENSIONY, TILE_TYPES, TILE_MAP, TILE_ARR, BLOCKDEPTH, CONTROL_STATES, UIDEPTH, PARCEL, showAlert } from "./constants";
+import { SQUARESIZE, FLOORDEPTH, WORLD_DIMENSIONX, WORLD_DIMENSIONY, TILE_TYPES, TILE_MAP, TILE_ARR, BLOCKDEPTH, CONTROL_STATES, UIDEPTH, PARCEL, showAlert, colorFor } from "./constants";
 import Phaser from "phaser";
 import { Turret } from "./buildings/Turret";
 import { Catapult } from "./buildings/Catapult";
@@ -66,6 +66,18 @@ export class Map{
     static worldSeedBushes = [];
     static worldBerryBushes = [];
     static worldSpawners = [];
+    static navGridRevision = 0;
+    static navGridRevisionReason = null;
+
+    static getNavGridRevision() {
+        return Math.max(0, Number(this.navGridRevision || 0));
+    }
+
+    static bumpNavGridRevision(reason = "nav_grid_change") {
+        this.navGridRevision = this.getNavGridRevision() + 1;
+        this.navGridRevisionReason = reason;
+        return this.navGridRevision;
+    }
 
     static _bindCropHover(block, x, y, teamNumber = "1") {
         if (!block) return;
@@ -96,6 +108,7 @@ export class Map{
 
     static initMap(){
         this._detailedWorldDrawn = false;
+        this._detailedWorldDirty = false;
         this.blocks = [];
         this.waterBlocks = [];
         this.outerWaterTileSprite = null;
@@ -111,6 +124,7 @@ export class Map{
     }
 
     static resetRuntimeState() {
+        this._detailedWorldDirty = false;
         try { this.placingItem?.destroy?.(); } catch {}
         this.placingItem = null;
         this.isPlacing = false;
@@ -149,6 +163,8 @@ export class Map{
         this.enemyNavGrid = [];
         this.enemyRegionSystem = null;
         this.enemyRegionDrawer = null;
+        this.navGridRevision = 0;
+        this.navGridRevisionReason = null;
         this.imageData = null;
         this.blocks = [];
         this.cropDict = {};
@@ -213,6 +229,7 @@ export class Map{
                 }
             }
         }
+        this.bumpNavGridRevision("map_image_nav_grid");
         this.imageData = null;
         return this.grid;
     }
@@ -230,15 +247,21 @@ export class Map{
             .setAlpha(0.5) // Make it semi-transparent
             .setDepth(item.depth) // Ensure it's above everything
             .setInteractive();
+        this.placingItem._placementItem = item;
         this.placingItem.blocked = false;
        // Enable mouse-following behavior
         this.isPlacing = true; 
         this.scene.input.on('pointermove', (pointer) => {
-            if (this.placingItem && this.isPlacing && pointer.x>0 && pointer.x<SQUARESIZE*WORLD_DIMENSIONX && pointer.y>0 && pointer.y<SQUARESIZE*WORLD_DIMENSIONY) {
+            if (
+                this.placingItem &&
+                this.isPlacing &&
+                Number.isFinite(pointer.worldX) &&
+                Number.isFinite(pointer.worldY)
+            ) {
                 let lenX = item.lenX;
                 let lenY = item.lenY;
-                let x = Math.floor(pointer.worldX - pointer.worldX%SQUARESIZE);
-                let y = Math.floor(pointer.worldY - pointer.worldY%SQUARESIZE);
+                let x = Math.floor(pointer.worldX / SQUARESIZE) * SQUARESIZE;
+                let y = Math.floor(pointer.worldY / SQUARESIZE) * SQUARESIZE;
                 if(item.lenX%2 != 0){x += SQUARESIZE/2}
                 if(item.lenY%2 != 0){y += SQUARESIZE/2}
                 // compute the grid‐aligned top-left tile for the item
@@ -621,6 +644,10 @@ export class Map{
 
     static _updatePlacementAutoClearPreview(posX, posY, lenX, lenY, previewItem = null, options = {}, blocked = false) {
         if (!previewItem || !this.scene?.add) return;
+        if (this.scene?.zoomMixer?.mode === "overview") {
+            this._clearPlacementAutoClearPreview(previewItem);
+            return;
+        }
 
         const targets = this._placementAutoClearTargets(posX, posY, lenX, lenY, options, blocked);
         const nextKey = targets.map((target) => `${target.kind}:${target.x},${target.y}`).join("|");
@@ -865,6 +892,7 @@ export class Map{
     }
 
     static addBlockItem(posX, posY, item){
+        let navChanged = false;
         for (let y = posY; y < posY + item.lenY; y++) {
             for (let x = posX; x < posX + item.lenX; x++) {
                 this.checkAndPlace(x,y,item.grid,item.depth)
@@ -872,11 +900,18 @@ export class Map{
                     let barrierBlock = this.scene.physics.add.staticImage(x * SQUARESIZE + SQUARESIZE/2, y * SQUARESIZE + SQUARESIZE/2, 'barrier');
                     barrierBlock.setDisplaySize(SQUARESIZE, SQUARESIZE).setDepth(FLOORDEPTH).setAlpha(0);
                     this.barrier.add(barrierBlock);
-                    Map.navGrid[y][x] = 0;
-                    Map.enemyNavGrid[y][x] = 0;
+                    if (Map.navGrid?.[y]?.[x] !== undefined) {
+                        navChanged = navChanged || Map.navGrid[y][x] !== 0;
+                        Map.navGrid[y][x] = 0;
+                    }
+                    if (Map.enemyNavGrid?.[y]?.[x] !== undefined) {
+                        navChanged = navChanged || Map.enemyNavGrid[y][x] !== 0;
+                        Map.enemyNavGrid[y][x] = 0;
+                    }
                 }
             }
         }
+        if (navChanged) this.bumpNavGridRevision("block_item_nav_change");
         this.finalizeBlockPlacement(posX, posY, item);
     }
 
@@ -1162,6 +1197,7 @@ export class Map{
         this._clearOuterWaterBackdrop();
         this.barrier.clear(true);
         this._detailedWorldDrawn = false;
+        this._detailedWorldDirty = false;
     }
 
     static _destroyNode(node){
@@ -1234,6 +1270,7 @@ export class Map{
         // After we've rebuilt visible world objects:
         this._uiIgnoreWorldLayer();
         this._detailedWorldDrawn = true;
+        this._detailedWorldDirty = false;
     }   
 
     static _clearOuterWaterBackdrop() {
@@ -1330,6 +1367,15 @@ export class Map{
         if (!rect) return;
 
         this.refreshTerrainShapesInRect(x, y, w, h, pad);
+
+        if (this.scene?.zoomMixer?.mode === "overview") {
+            this._detailedWorldDirty = true;
+            this._refreshOverviewTextureForRect(rect.minX, rect.minY, rect.width, rect.height);
+            this.setDetailedWorldVisible?.(false);
+            this.setDetailedWorldPaused?.(true);
+            this._uiIgnoreWorldLayer();
+            return;
+        }
 
         for (let gy = rect.minY; gy <= rect.maxY; gy++) {
             for (let gx = rect.minX; gx <= rect.maxX; gx++) {
@@ -1981,6 +2027,14 @@ export class Map{
         const cell = this.grid[y]?.[x];
         if (cell == null) return;
 
+        if (this.scene?.zoomMixer?.mode === "overview") {
+            this._detailedWorldDirty = true;
+            this._refreshOverviewTextureForRect(x, y, 1, 1);
+            this.setDetailedWorldVisible?.(false);
+            this.setDetailedWorldPaused?.(true);
+            return null;
+        }
+
         const paired = Array.isArray(cell);
         const baseVal = paired ? cell[0] : cell;
         const topVal  = paired ? cell[1] : null;
@@ -2004,7 +2058,9 @@ export class Map{
                 this.addToWorldStatic(block); 
                 block.setFrame(1);
                 this._bindCropHover(block, x, y, "1");
-                WallPlacementController.bindStructureLightAndVision(block, cx, cy, {
+                WallPlacementController.bindStructureLightAndVision(block, x, y, {
+                    lenX: def.lenX ?? 1,
+                    lenY: def.lenY ?? 1,
                     r: 6,
                     boost: 0.12,
                     intensity: 1.1
@@ -2052,7 +2108,9 @@ export class Map{
                             ? (a.corner || a.interior)
                             : a.interior;
                     node = this._spawnSpec(cx, cy, def.depth, spec, angle);
-                    WallPlacementController.bindStructureLightAndVision(node, cx, cy, {
+                    WallPlacementController.bindStructureLightAndVision(node, x, y, {
+                        lenX: def.lenX ?? 1,
+                        lenY: def.lenY ?? 1,
                         r: 6,
                         boost: 0.12,
                         intensity: 1.1
@@ -2080,7 +2138,9 @@ export class Map{
 
                         // ✅ put this door into the door physics group so overlap works
                         WallPlacementController.bindDoorSprite(this.scene, node);
-                        WallPlacementController.bindStructureLightAndVision(node, cx, cy, {
+                        WallPlacementController.bindStructureLightAndVision(node, x, y, {
+                            lenX: def.lenX ?? 1,
+                            lenY: def.lenY ?? 1,
                             r: 6,
                             boost: 0.12,
                             intensity: 1.1
@@ -2244,6 +2304,22 @@ static _normalizeGridRect(x, y, w, h, pad = 0) {
   };
 }
 
+static _refreshOverviewTextureForRect(x, y, w = 1, h = 1) {
+  const mixer = this.scene?.zoomMixer;
+  if (!mixer || !Array.isArray(this.grid) || !Array.isArray(this.grid[0])) return false;
+
+  if (mixer.overviewImage?.active) {
+    mixer.updateOverviewCell?.(x, y, this.grid, w, h);
+  } else {
+    mixer.buildOverviewTextureFromGrid?.(this.grid, SQUARESIZE, (cell) => colorFor(cell));
+  }
+
+  const overviewImage = mixer.ensureOverviewImage?.();
+  overviewImage?.setVisible?.(true);
+  overviewImage?.setAlpha?.(1);
+  return true;
+}
+
 // Returns true if val (numeric tile code) maps to water
 static _isWaterVal(val) {
   return TILE_MAP(val) === "water";
@@ -2270,8 +2346,17 @@ static setGroundTile(gx, gy, tileType, opts = {}) {
 
   const walkableWater = tileType === "water" && opts.walkable === true;
   const blocks = ((tileType === "water" && !walkableWater) || tileType === "wall" || tileType === "woodWall");
-  this.navGrid[gy][gx] = blocks ? 0 : 1;
-  this.enemyNavGrid[gy][gx] = blocks ? 0 : 1;
+  const nextNav = blocks ? 0 : 1;
+  let navChanged = false;
+  if (this.navGrid?.[gy] && this.navGrid[gy][gx] !== undefined) {
+    navChanged = navChanged || this.navGrid[gy][gx] !== nextNav;
+    this.navGrid[gy][gx] = nextNav;
+  }
+  if (this.enemyNavGrid?.[gy] && this.enemyNavGrid[gy][gx] !== undefined) {
+    navChanged = navChanged || this.enemyNavGrid[gy][gx] !== nextNav;
+    this.enemyNavGrid[gy][gx] = nextNav;
+  }
+  if (navChanged) this.bumpNavGridRevision("ground_tile_nav_change");
 }
 
 // Bulk paint helper
@@ -2361,8 +2446,12 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
                 this.blocks[y*WORLD_DIMENSIONX+x][0]?.destroy();
                 this.blocks[y*WORLD_DIMENSIONX+x][0] = block;
                 if(this.blocks[y*WORLD_DIMENSIONX+x]?.[1]?.body){
-                    Map.navGrid[y][x] = 0;
-                    Map.enemyNavGrid[y][x] = 0;
+                    const navChanged =
+                        (Map.navGrid?.[y]?.[x] !== undefined && Map.navGrid[y][x] !== 0) ||
+                        (Map.enemyNavGrid?.[y]?.[x] !== undefined && Map.enemyNavGrid[y][x] !== 0);
+                    if (Map.navGrid?.[y]?.[x] !== undefined) Map.navGrid[y][x] = 0;
+                    if (Map.enemyNavGrid?.[y]?.[x] !== undefined) Map.enemyNavGrid[y][x] = 0;
+                    if (navChanged) this.bumpNavGridRevision("layered_block_nav_change");
                 }
             }
         }
@@ -2617,7 +2706,18 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
 
     
     static addSpreadArr(x, y, newItem, index){
-        if(newItem.block){Map.navGrid[y][x] = 0; Map.enemyNavGrid[y][x] = 0;}
+        if(newItem.block){
+            let navChanged = false;
+            if (Map.navGrid?.[y]?.[x] !== undefined) {
+                navChanged = navChanged || Map.navGrid[y][x] !== 0;
+                Map.navGrid[y][x] = 0;
+            }
+            if (Map.enemyNavGrid?.[y]?.[x] !== undefined) {
+                navChanged = navChanged || Map.enemyNavGrid[y][x] !== 0;
+                Map.enemyNavGrid[y][x] = 0;
+            }
+            if (navChanged) this.bumpNavGridRevision("spread_block_nav_change");
+        }
         if(Array.isArray(this.grid[y][x])){
             const targetIndex = index > -1 ? index : (newItem.depth === FLOORDEPTH ? 0 : 1);
             this.grid[y][x][targetIndex] = newItem.grid
@@ -2902,7 +3002,6 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
             return !!node.scene || !!node.parentContainer || !!node.parentList;
         };
 
-        if (isLiveNode(this.outerWaterTileSprite)) return true;
         if (Array.isArray(this.blocks) && this.blocks.some(isLiveNode)) return true;
         return Array.isArray(this.worldLayer?.list) && this.worldLayer.list.some(isLiveNode);
     }

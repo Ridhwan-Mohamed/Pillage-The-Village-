@@ -9,6 +9,8 @@ const WALL_PRICES = Object.freeze({
   stone: 15,
 });
 
+export const DEFAULT_LAYOUT_MOVE_RANGE = 5;
+
 export class DraftStartState {
   constructor(opts = {}) {
     this.teamName = opts.teamName ?? "";
@@ -44,6 +46,7 @@ export class DraftStartState {
       estimatedTiles: 0,
       estimatedCost: 0,
     };
+    this.layoutMoveRange = Math.max(0, Math.floor(opts.layoutMoveRange ?? DEFAULT_LAYOUT_MOVE_RANGE));
 
     this._listeners = new Set();
     this.recalc();
@@ -175,6 +178,7 @@ export class DraftStartState {
       },
       extras: { ...this.extras },
       wall: { ...this.wall },
+      layoutMoveRange: this.layoutMoveRange,
       cards: {
         picked: (this.cards.picked ?? []).map((card) => ({
           id: card.id ?? card.name ?? card.key,

@@ -10,6 +10,7 @@ import { fightManager } from "../Manager/fightManager";
 import { Manager } from "../Manager/Manager";
 import { AudioManager } from "../Manager/AudioManager";
 import { ZoomMixer } from "../UI/ZoomMixer";
+import { SiegePlanner } from "../lib/navmesh/SiegePlanner";
 import { attachDirectionalSix } from "./PlayerDirectionalAnimator";
 import shockerWalkDown from "url:../assets/Players/shocker/shocker_walk_down.png";
 import shockerWalkDownLeft from "url:../assets/Players/shocker/shocker_walk_down_left.png";
@@ -29,6 +30,9 @@ const WALL_DAMAGE_PRIMARY = 72;
 const WALL_DAMAGE_CHAIN = 34;
 const BUILDING_DAMAGE = 40;
 const PLAYER_DAMAGE = 26;
+const SHOCK_DAMAGE_SCALE_BY_TARGET_COUNT = [0, 1.25, 0.9, 0.75];
+const SHOCK_DAMAGE_SPREAD_FALLOFF = 0.1;
+const SHOCK_DAMAGE_MIN_SPREAD_SCALE = 0.5;
 
 export class Shocker {
     static speed = 66;
@@ -125,8 +129,12 @@ export class Shocker {
         }
         const hadPlayerTarget = Shocker._hasActivePlayerTarget(troop) || !!troop?._raiderPlayerChase;
         const result = Raider.update(troop);
+        const finishedWaterRecovery = recoveringFromWater && troop?.active && !troop._enemyWaterRecovery && !Player._isOnWater?.(troop);
         if (hadPlayerTarget && !Shocker._hasActivePlayerTarget(troop) && !troop?._raiderPlayerChase) {
             Shocker._clearShockCycle(troop);
+        }
+        if (finishedWaterRecovery || Shocker._needsMissionBreachTask(troop)) {
+            Shocker._ensureMissionBreachTask(troop, { preferDirectZap: true });
         }
         return result;
     }
@@ -382,17 +390,33 @@ export class Shocker {
                 rate: 0.94 + Math.random() * 0.12,
             });
             Shocker._drawElectricArc(troop.scene, from, to, index);
-            Shocker._applyShockDamage(troop, entry, index === 0);
+            Shocker._applyShockDamage(troop, entry, index === 0, unique.length);
         });
     }
 
-    static _applyShockDamage(troop, entry, isPrimary) {
+    static _damageScaleForTargetCount(targetCount = 1) {
+        const count = Math.max(1, Math.floor(Number(targetCount) || 1));
+        if (count < SHOCK_DAMAGE_SCALE_BY_TARGET_COUNT.length) {
+            return SHOCK_DAMAGE_SCALE_BY_TARGET_COUNT[count];
+        }
+        return Math.max(
+            SHOCK_DAMAGE_MIN_SPREAD_SCALE,
+            SHOCK_DAMAGE_SCALE_BY_TARGET_COUNT[3] - ((count - 3) * SHOCK_DAMAGE_SPREAD_FALLOFF)
+        );
+    }
+
+    static _scaleShockDamage(baseDamage, targetCount = 1) {
+        const raw = Number(baseDamage || 0) * Shocker._damageScaleForTargetCount(targetCount);
+        return Math.max(1, Math.round(raw));
+    }
+
+    static _applyShockDamage(troop, entry, isPrimary, targetCount = 1) {
         if (!entry) return false;
         if (entry.kind === "player") {
             const target = entry.target;
             if (!target?.active) return false;
             const wasFocusedTarget = Shocker._isFocusedPlayerTarget(troop, target);
-            target.health = Math.max(0, Number(target.health || 0) - PLAYER_DAMAGE);
+            target.health = Math.max(0, Number(target.health || 0) - Shocker._scaleShockDamage(PLAYER_DAMAGE, targetCount));
             fightManager.applyHitReaction(target, troop, troop.weapon);
             if (target.health <= 0) {
                 Player._cleanupCombatTicketForTarget?.(troop.body?.team, target);
@@ -408,7 +432,7 @@ export class Shocker {
             const target = entry.target;
             if (!Shocker._isBuildingActive(target)) return false;
             const tempTask = { value: target, duration: Number(target.health ?? target.hp ?? target.maxHealth ?? target.maxHp ?? 1) };
-            const result = buildingManager.applyDestroyDamage(tempTask, BUILDING_DAMAGE);
+            const result = buildingManager.applyDestroyDamage(tempTask, Shocker._scaleShockDamage(BUILDING_DAMAGE, targetCount));
             if (result?.destroyed) {
                 target.destroy?.();
             }
@@ -423,7 +447,8 @@ export class Shocker {
             const completionTask = countsSiegeProgress
                 ? troop.task
                 : (entry.task || Shocker._makeWallTask(wall));
-            const destroyed = wall.damage(isPrimary ? WALL_DAMAGE_PRIMARY : WALL_DAMAGE_CHAIN);
+            const baseDamage = isPrimary ? WALL_DAMAGE_PRIMARY : WALL_DAMAGE_CHAIN;
+            const destroyed = wall.damage(Shocker._scaleShockDamage(baseDamage, targetCount));
             if (destroyed) {
                 buildingManager._completeDestroyTile(troop, completionTask, wall.x, wall.y, {
                     countRaiderSiegeProgress: countsSiegeProgress,
@@ -552,6 +577,120 @@ export class Shocker {
         Manager._setTaskMeta?.(troop, task, CONTROL_STATES.DESTROY_MODE, null);
         if (approach.polyIds?.length) troop.__pendingPolyIds = approach.polyIds;
         Player.moveTo(troop, approach.path);
+        return true;
+    }
+
+    static _needsMissionBreachTask(troop) {
+        if (!troop?.active || troop._enemyWaterRecovery || Player._isOnWater?.(troop)) return false;
+        if (Shocker._hasActivePlayerTarget(troop) || troop._raiderPlayerChase) return false;
+        if (troop.task || troop.timer || troop.currentPath?.length) return false;
+        if (troop.state !== CONTROL_STATES.TRACK_MODE) return false;
+        return !!Shocker._getMissionTask(troop);
+    }
+
+    static _ensureMissionBreachTask(troop, opts = {}) {
+        if (!troop?.active || Shocker._hasActivePlayerTarget(troop) || troop._raiderPlayerChase) return false;
+
+        const missionTask = Shocker._getMissionTask(troop);
+        if (!missionTask) return false;
+
+        const reachableApproach = Shocker._findMissionApproach(troop, missionTask);
+        if (reachableApproach?.path?.length) return false;
+
+        const breachTasks = Shocker._buildMissionBreachTasks(troop, missionTask);
+        if (!breachTasks.length) return false;
+
+        const firstTask = breachTasks[0];
+        const firstWall = Wall.getAt(firstTask.x, firstTask.y);
+        if (!firstWall?.active) return false;
+
+        const preferDirectZap = opts?.preferDirectZap !== false;
+        if (preferDirectZap && Shocker._distanceToWall(troop, firstWall) <= WALL_SHOCK_RANGE) {
+            return Shocker._assignDirectBreachTask(troop, missionTask, breachTasks);
+        }
+
+        return Raider.beginSiegeForTask?.(troop, missionTask) || false;
+    }
+
+    static _buildMissionBreachTasks(troop, missionTask) {
+        if (!troop?.active || !missionTask) return [];
+        const fp = Raider._taskToFootprint?.(missionTask) || {
+            x: missionTask.x,
+            y: missionTask.y,
+            w: missionTask.type?.lenX ?? 1,
+            h: missionTask.type?.lenY ?? 1,
+        };
+        const gridH = Map.enemyNavGrid?.length ?? 0;
+        const gridW = gridH ? (Map.enemyNavGrid[0]?.length ?? 0) : 0;
+        if (!gridW || !gridH) return [];
+
+        Map.enemyRegionSystem?.ensureUpToDate?.();
+        const targets = SiegePlanner.buildPerimeterTargets(fp.x, fp.y, fp.w, fp.h, gridW, gridH);
+        const planner = Raider._ensureSiegePlanner?.();
+        const breachTiles = planner?.planBreach?.(troop.x, troop.y, targets);
+        if (!breachTiles?.length) return [];
+
+        const now = troop.scene?.getSimulationNow?.() ?? troop.scene?.simNowMs ?? troop.scene?.time?.now ?? Date.now();
+        const breachPlanId = `shocker-siege-${troop.id ?? "boss"}-${Math.round(now)}`;
+        const tasks = [];
+        for (let i = 0; i < breachTiles.length; i++) {
+            const tile = breachTiles[i];
+            const wall = Wall.getAt(tile.x, tile.y);
+            if (!wall?.active) continue;
+            tasks.push({
+                ...Shocker._makeWallTask(wall),
+                duration: 500,
+                breachPlanId,
+                breachOrder: i,
+                breachChainLength: breachTiles.length,
+                eligibleTroopIds: [troop.id],
+                shockerDirectSiege: true,
+            });
+        }
+        return tasks;
+    }
+
+    static _assignDirectBreachTask(troop, missionTask, breachTasks = []) {
+        if (!troop?.active || !breachTasks.length) return false;
+        const team0 = Teams.teamLists?.["0"];
+        if (!team0) return false;
+        if (!Array.isArray(team0.siegeTileStates)) team0.siegeTileStates = [];
+        if (!team0._siegeSeen) team0._siegeSeen = new Set();
+
+        Raider._releaseSiegeTasks?.(troop);
+        Shocker._clearShockCycle(troop);
+
+        const queued = [];
+        for (const task of breachTasks) {
+            const key = `${task.x},${task.y}`;
+            if (!team0.siegeTileStates.includes(task)) {
+                team0.siegeTileStates.push(task);
+            }
+            team0._siegeSeen.add(key);
+            queued.push(task);
+        }
+        if (!queued.length) return false;
+
+        const first = queued[0];
+        troop._postSiegeTask = missionTask;
+        troop._siegeQueue = queued.slice(1);
+        troop.task = first;
+        first.assigned = Math.max(0, Number(first.assigned || 0)) + 1;
+        troop.roam = false;
+        troop.destX = first.x;
+        troop.destY = first.y;
+        troop.currentPath?.splice?.(0);
+        troop.finalPos = null;
+        troop.body?.setVelocity?.(0, 0);
+        Raider._rememberMission?.(troop, missionTask);
+        Manager._setTaskMeta?.(troop, first, CONTROL_STATES.DESTROY_MODE_T, "siegeTileStates");
+        Teams.movePlayerState(troop, CONTROL_STATES.DESTROY_MODE_T);
+        Player.setAnimState?.(troop, troop.idle);
+
+        const plan = Shocker._resolveShockPlan(troop);
+        if (plan) {
+            Shocker._startShockCycle(troop, plan);
+        }
         return true;
     }
 

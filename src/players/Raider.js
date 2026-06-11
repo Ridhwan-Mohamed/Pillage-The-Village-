@@ -990,6 +990,7 @@ export class Raider {
     }
 
     static _ensureSiegePlanner() {
+        Map.enemyRegionSystem?.ensureUpToDate?.();
         const plannerStale =
             !Map.siegePlanner ||
             Map.siegePlanner.enemyNavGrid !== Map.enemyNavGrid ||
