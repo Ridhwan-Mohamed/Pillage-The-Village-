@@ -526,7 +526,18 @@ export class Projectile {
             ?? source.body?.team
             ?? source.player?.body?.team
             ?? source.player?.team
+            ?? source.sourceStructure?.team
+            ?? source.sourceStructure?.teamNumber
+            ?? source.buildingRef?.team
+            ?? source.buildingRef?.teamNumber
             ?? null;
+    }
+
+    static getShotOwner(source) {
+        return source?.player
+            ?? source?.sourceStructure
+            ?? source?.buildingRef
+            ?? source;
     }
 
     static shouldIgnoreStructureForShot(source, hit) {
@@ -540,7 +551,7 @@ export class Projectile {
 
     static isExplicitWallDestroyTarget(source, hit) {
         const wall = hit?.wallRef;
-        const shooter = source?.player || source;
+        const shooter = this.getShotOwner(source);
         const task = shooter?.task;
         if (!wall || !task) return false;
         if (shooter?.state !== CONTROL_STATES.DESTROY_MODE_T) return false;
@@ -550,9 +561,21 @@ export class Projectile {
         return Number(wall.x) === targetX && Number(wall.y) === targetY;
     }
 
+    static sourceCanShootThroughFriendlyWalls(source) {
+        const shooter = this.getShotOwner(source);
+        return !!(
+            source?.canShootThroughFriendlyWalls ||
+            source?.weapon?.shootThroughFriendlyWalls ||
+            shooter?.canShootThroughFriendlyWalls ||
+            shooter?.weapon?.shootThroughFriendlyWalls ||
+            shooter?.topSprite?.canShootThroughFriendlyWalls ||
+            shooter?.topSprite?.weapon?.shootThroughFriendlyWalls ||
+            shooter?.isGunslinger
+        );
+    }
+
     static canShootThroughFriendlyWall(source, hit) {
-        const shooter = source?.player || source;
-        if (!shooter?.isGunslinger || !this.isWallStructureHit(hit)) return false;
+        if (!this.sourceCanShootThroughFriendlyWalls(source) || !this.isWallStructureHit(hit)) return false;
         if (this.isExplicitWallDestroyTarget(source, hit)) return false;
 
         const shotTeam = Number(this.getShotTeam(source));
@@ -740,6 +763,7 @@ export class Projectile {
             fightManager.applyHitReaction(target, attacker, projectile.weapon);
 
             target.health = Math.max(0, target.health - result.damage);
+            Player.showMiniBarsOnHit?.(target);
             Projectile.playProjectileImpact(projectile, target.x, target.y - 6);
 
             if (target.health <= 0) {

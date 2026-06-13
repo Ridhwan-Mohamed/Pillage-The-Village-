@@ -5,7 +5,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     selectRole: "farmer",
     faceDown: true,
     focusRole: false,
-    text: "Welcome to Cleared to Build. This is a base-building strategy game where your choices shape how the run turns out.",
+    text: "Welcome to Permit Approved! This is a base-building strategy game where your choices shape how the run turns out.",
   },
   {
     id: "farmer_choices",

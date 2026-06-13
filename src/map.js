@@ -1,4 +1,4 @@
-import { SQUARESIZE, FLOORDEPTH, WORLD_DIMENSIONX, WORLD_DIMENSIONY, TILE_TYPES, TILE_MAP, TILE_ARR, BLOCKDEPTH, CONTROL_STATES, UIDEPTH, PARCEL, showAlert, colorFor } from "./constants";
+import { SQUARESIZE, FLOORDEPTH, WORLD_DIMENSIONX, WORLD_DIMENSIONY, TILE_TYPES, TILE_MAP, TILE_ARR, BLOCKDEPTH, CONTROL_STATES, UIDEPTH, PARCEL, showAlert, colorFor, MAX_CROP_GROWTH_STAGE } from "./constants";
 import Phaser from "phaser";
 import { Turret } from "./buildings/Turret";
 import { Catapult } from "./buildings/Catapult";
@@ -79,6 +79,102 @@ export class Map{
         return this.navGridRevision;
     }
 
+    static _deriveNavStateForCell(gx, gy) {
+        const cell = this.grid?.[gy]?.[gx];
+        if (cell == null) return null;
+
+        let playerWalkable = true;
+        let enemyWalkable = true;
+        const values = Array.isArray(cell) ? cell : [cell];
+
+        for (const val of values) {
+            const typeName = TILE_MAP(val);
+            if (!typeName) continue;
+
+            if (Wall.isWallOrDoorCell(val)) {
+                const kind = Wall.kindFromGridVal(val);
+                if (kind?.isDoor) {
+                    const ownerTeam = Wall.getAt(gx, gy)?.team ?? 1;
+                    if (Number(ownerTeam) === 0) playerWalkable = false;
+                    else enemyWalkable = false;
+                } else {
+                    playerWalkable = false;
+                    enemyWalkable = false;
+                }
+                continue;
+            }
+
+            const type = TILE_TYPES[typeName];
+            if (typeName === "water" || type?.block || type?.stayBlocked) {
+                playerWalkable = false;
+                enemyWalkable = false;
+            }
+        }
+
+        return {
+            player: playerWalkable ? 1 : 0,
+            enemy: enemyWalkable ? 1 : 0,
+        };
+    }
+
+    static recomputeNavForCell(gx, gy, reason = "nav_recompute", opts = {}) {
+        gx = Math.floor(Number(gx));
+        gy = Math.floor(Number(gy));
+        if (!Number.isFinite(gx) || !Number.isFinite(gy)) return null;
+
+        const next = this._deriveNavStateForCell(gx, gy);
+        if (!next) return null;
+
+        let changed = false;
+        if (this.navGrid?.[gy]?.[gx] !== undefined) {
+            changed = changed || this.navGrid[gy][gx] !== next.player;
+            this.navGrid[gy][gx] = next.player;
+        }
+        if (this.enemyNavGrid?.[gy]?.[gx] !== undefined) {
+            changed = changed || this.enemyNavGrid[gy][gx] !== next.enemy;
+            this.enemyNavGrid[gy][gx] = next.enemy;
+        }
+        if (changed && opts.bump !== false) this.bumpNavGridRevision(reason);
+
+        return {
+            x: gx,
+            y: gy,
+            player: next.player,
+            enemy: next.enemy,
+            changed,
+        };
+    }
+
+    static recomputeNavForCells(cells = [], reason = "nav_recompute") {
+        const seen = new Set();
+        const results = [];
+        let changed = false;
+
+        for (const cell of cells || []) {
+            const gx = Math.floor(Number(cell?.x));
+            const gy = Math.floor(Number(cell?.y));
+            if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
+            const key = `${gx},${gy}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const result = this.recomputeNavForCell(gx, gy, reason, { bump: false });
+            if (!result) continue;
+            results.push(result);
+            changed = changed || result.changed;
+        }
+
+        if (changed) this.bumpNavGridRevision(reason);
+        return {
+            results,
+            changed,
+            playerOpen: results.filter((entry) => entry.player === 1),
+            playerBlocked: results.filter((entry) => entry.player === 0),
+            enemyOpen: results.filter((entry) => entry.enemy === 1),
+            enemyBlocked: results.filter((entry) => entry.enemy === 0),
+        };
+    }
+
     static _bindCropHover(block, x, y, teamNumber = "1") {
         if (!block) return;
 
@@ -140,18 +236,15 @@ export class Map{
         try { this.structureBarrier?.destroy?.(); } catch {}
         this.structureBarrier = null;
 
-        try { this.worldLayer?.removeAll?.(true); } catch {}
-        try { this.worldLayer?.destroy?.(true); } catch {}
+        this._destroyLayer(this.worldLayer, true);
         this.worldLayer = null;
 
-        try { this.outerWaterLayer?.removeAll?.(true); } catch {}
-        try { this.outerWaterLayer?.destroy?.(true); } catch {}
+        this._destroyLayer(this.outerWaterLayer, true);
         this.outerWaterLayer = null;
         this.outerWaterTileSprite = null;
         this.outerWaterAmbienceOverlay = null;
 
-        try { this.worldStaticLayer?.removeAll?.(true); } catch {}
-        try { this.worldStaticLayer?.destroy?.(true); } catch {}
+        this._destroyLayer(this.worldStaticLayer, true);
         this.worldStaticLayer = null;
 
         this.grid = [];
@@ -1206,6 +1299,35 @@ export class Map{
         if (node.destroy) node.destroy();
     }
 
+    static _destroyLayerChildren(layer, fromScene = false) {
+        if (!layer || !Array.isArray(layer.list)) return;
+
+        while (layer.list.length) {
+            const child = layer.list[0];
+            if (!child) {
+                layer.list.shift();
+                continue;
+            }
+
+            const previousLength = layer.list.length;
+            try { child.destroy?.(fromScene); } catch {}
+
+            if (Array.isArray(layer.list) && layer.list[0] === child && layer.list.length === previousLength) {
+                try { layer.remove?.(child); } catch {
+                    layer.list.shift();
+                    if (child.displayList === layer) child.displayList = null;
+                }
+            }
+        }
+    }
+
+    static _destroyLayer(layer, fromScene = false) {
+        if (!layer) return;
+
+        this._destroyLayerChildren(layer, fromScene);
+        try { layer.destroy?.(fromScene); } catch {}
+    }
+
     static _storeAt(x,y,layerIndex,sprites){ // 0=floor, 1=block
         const idx = y*WORLD_DIMENSIONX + x;
         if (!Array.isArray(this.blocks[idx])) {
@@ -1228,7 +1350,7 @@ export class Map{
         this.barrier.clear(true);
 
         // remove any prior world-layer children created last redraw
-        if (this.worldLayer) this.worldLayer.removeAll(true);
+        this._destroyLayerChildren(this.worldLayer);
         this._drawOuterWaterBackdrop(width, height);
 
         // Full-world redraw (no camera chunk windowing).
@@ -1278,7 +1400,7 @@ export class Map{
         this.outerWaterAmbienceOverlay = null;
         this.outerWaterTileSprite?.destroy?.();
         this.outerWaterTileSprite = null;
-        this.outerWaterLayer?.removeAll?.(true);
+        this._destroyLayerChildren(this.outerWaterLayer);
     }
 
     static setOuterWaterAmbience(ambientBrightness = 1, tintColor = 0x020716) {
@@ -2054,9 +2176,14 @@ export class Map{
                 const def = TILE_TYPES.crops;
                 const cx  = x * SQUARESIZE + SQUARESIZE / 2;
                 const cy  = y * SQUARESIZE + SQUARESIZE / 2;
+                const existingCrop = Teams.getCropAt?.(x, y, "1") || null;
+                const hasSeed = existingCrop?.hasSeed === true;
+                const growthStage = hasSeed
+                    ? Math.max(0, Math.min(MAX_CROP_GROWTH_STAGE, Number(existingCrop?.growthStage || 0)))
+                    : 0;
                 const block = this.scene.add.sprite(cx, cy, 'crops').setDepth(def.depth);
                 this.addToWorldStatic(block); 
-                block.setFrame(1);
+                block.setFrame(hasSeed ? 1 + growthStage : 0);
                 this._bindCropHover(block, x, y, "1");
                 WallPlacementController.bindStructureLightAndVision(block, x, y, {
                     lenX: def.lenX ?? 1,
@@ -2065,7 +2192,7 @@ export class Map{
                     boost: 0.12,
                     intensity: 1.1
                 });
-                block.hasSeed = true;
+                block.hasSeed = hasSeed;
                 this.handleGridDelete(block, def, x, y);
             }
             return;
@@ -2393,25 +2520,46 @@ static fillGroundRect(x0, y0, w, h, tileType, opts = {}) {
         if (type.name === "crops") {
             const key = `${x},${y}`;
             Map.cropDict[key] = block;
-            const cropState = {
+            let cropState = Teams.getCropAt?.(x, y, '1') || null;
+            const hasSeed = block?.hasSeed === true;
+            const growthStage = hasSeed
+                ? Math.max(0, Math.min(MAX_CROP_GROWTH_STAGE, Number(cropState?.growthStage || 0)))
+                : 0;
+
+            if (!cropState) {
+                cropState = {
                 sprite: block,
                 x: x,
                 y: y,
                 teamNumber: '1',
                 dailyWatered: false,
-                growthStage: 0,
-                hasSeed: true,
+                    growthStage,
+                    hasSeed,
                 harvestsRemaining: 0
-            };
+                };
+                Teams.teamLists['1'].crops.push(cropState);
+            } else {
+                cropState.sprite = block;
+                cropState.teamNumber = cropState.teamNumber ?? '1';
+                cropState.hasSeed = hasSeed;
+                cropState.growthStage = growthStage;
+                if (!hasSeed) {
+                    cropState.dailyWatered = false;
+                    cropState.harvestsRemaining = 0;
+                }
+            }
+
             Map._bindCropHover(block, x, y, cropState.teamNumber);
-            Teams.teamLists['1'].crops.push(cropState);
-            Teams.teamLists['1'].wateringList.push({
-                x: x,
-                y: y,
-                assigned: 0,
-                sprite: block
-            });
-            Teams.syncCropWaterIndicator?.(cropState);
+            block.hasSeed = cropState.hasSeed === true;
+            block.setFrame?.(block.hasSeed ? 1 + cropState.growthStage : 0);
+            if (cropState.hasSeed && cropState.growthStage < MAX_CROP_GROWTH_STAGE) {
+                Teams.setCropForWatering?.(cropState);
+            } else if (cropState.hasSeed && cropState.growthStage >= MAX_CROP_GROWTH_STAGE) {
+                Teams.addFarmSpots?.(block, x, y);
+                Teams.syncCropWaterIndicator?.(cropState);
+            } else {
+                Teams.syncCropWaterIndicator?.(cropState);
+            }
             // track this crop separately
             const idx = y * WORLD_DIMENSIONX + x;
             const slot = this.blocks[idx];

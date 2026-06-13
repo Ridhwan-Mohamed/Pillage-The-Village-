@@ -58,6 +58,7 @@ export const weapons = {
     projectilePointsUp: true,
     projectileTrail: true,
     projectileTrailColor: 0xffd45a,
+    shootThroughFriendlyWalls: true,
     attackSfxKey: "sfx_gun_shot",
     moveSlowMultiplier: 0.72,
     moveSlowDurationMs: 650,
@@ -100,6 +101,7 @@ export const weapons = {
     projectilePointsUp: true,
     projectileTrail: true,
     projectileTrailColor: 0x9ca3af,
+    shootThroughFriendlyWalls: true,
     attackSfxKey: "sfx_gun_shot",
   },
 

@@ -154,7 +154,7 @@ function snapshotCropState(crop) {
     teamNumber: String(crop.teamNumber ?? "1"),
     dailyWatered: !!crop.dailyWatered,
     growthStage: Math.max(0, Number(crop.growthStage || 0)),
-    hasSeed: crop.hasSeed !== false,
+    hasSeed: crop.hasSeed === true,
     harvestsRemaining: Math.max(0, Number(crop.harvestsRemaining || 0)),
   };
 }

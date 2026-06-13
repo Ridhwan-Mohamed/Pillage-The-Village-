@@ -91,12 +91,26 @@ export class MainMenu {
         return navGrid;
     }
 
+    static _cloneGrid(grid) {
+        if (!Array.isArray(grid) || !Array.isArray(grid[0])) return [];
+        return typeof structuredClone === 'function'
+            ? structuredClone(grid)
+            : JSON.parse(JSON.stringify(grid));
+    }
+
+    static _sameGridShape(a, b) {
+        return Array.isArray(a) &&
+            Array.isArray(a[0]) &&
+            Array.isArray(b) &&
+            Array.isArray(b[0]) &&
+            a.length === b.length &&
+            a[0].length === b[0].length;
+    }
+
     static _ensureNavGridForScene(scene, snapshot = null) {
         const savedNavGrid = snapshot?.world?.navGrid;
         if (Array.isArray(savedNavGrid) && Array.isArray(savedNavGrid[0])) {
-            Map.navGrid = typeof structuredClone === 'function'
-                ? structuredClone(savedNavGrid)
-                : JSON.parse(JSON.stringify(savedNavGrid));
+            Map.navGrid = MainMenu._cloneGrid(savedNavGrid);
             Map.bumpNavGridRevision?.("saved_nav_grid_loaded");
             return Map.navGrid;
         }
@@ -108,6 +122,20 @@ export class MainMenu {
         Map.navGrid = MainMenu._buildNavGridFromGridData(scene?.gridData);
         Map.bumpNavGridRevision?.("nav_grid_built_from_scene");
         return Map.navGrid;
+    }
+
+    static _ensureEnemyNavGridForScene(scene, snapshot = null, navGrid = null) {
+        const baseNavGrid = navGrid ?? MainMenu._ensureNavGridForScene(scene, snapshot);
+        const savedEnemyNavGrid = snapshot?.world?.enemyNavGrid;
+        if (MainMenu._sameGridShape(savedEnemyNavGrid, baseNavGrid)) {
+            Map.enemyNavGrid = MainMenu._cloneGrid(savedEnemyNavGrid);
+            Map.bumpNavGridRevision?.("saved_enemy_nav_grid_loaded");
+            return Map.enemyNavGrid;
+        }
+
+        Map.enemyNavGrid = MainMenu._cloneGrid(baseNavGrid);
+        Map.bumpNavGridRevision?.("enemy_nav_grid_initialized");
+        return Map.enemyNavGrid;
     }
 
     static _ensureZoomMixer(scene) {
@@ -1099,7 +1127,7 @@ export class MainMenu {
             continueButton._menuHoverText = `Continue on last save - Day ${continueDay}`;
         }
         itchButton._menuHoverKey = 'itch';
-        itchButton._menuHoverText = 'A game by badbaado';
+        itchButton._menuHoverText = 'A game by local_hostage';
         if (crownButton) {
             crownButton._menuHoverKey = 'demo-crown';
             crownButton._menuHoverText = 'You beat the demo!';
@@ -1814,7 +1842,7 @@ export class MainMenu {
         itchButton.buttonHit.on('pointerdown', () => {
             AudioManager.playMenuClick();
             if (typeof window !== 'undefined') {
-                window.open('https://badbaado.itch.io/', '_blank', 'noopener,noreferrer');
+                window.open('https://local-hostage.itch.io/', '_blank', 'noopener,noreferrer');
             }
         });
 
@@ -2506,7 +2534,7 @@ export class MainMenu {
         };
 
         worker.onmessage = (e) => {
-            const { success, polys, error } = e.data;
+            const { success, polys, enemyPolys, error } = e.data;
             if (!success) {
                 console.error("Navmesh worker failed:", error);
                 loading.destroy();
@@ -2532,20 +2560,20 @@ export class MainMenu {
             PathRegistry.init(Map.navMesh);
             buildingManager.NavMeshUpdater = scene.navMeshUpdater;
 
-            // ✅ NEW: enemy grid (dupe) + enemy mesh (dupe) + enemy updater + enemy registry
-            Map.enemyNavGrid = Map.navGrid.map(row => row.slice());
+            // Enemy grid/mesh can differ from player pathing at owned doors.
+            Map.enemyNavGrid = MainMenu._cloneGrid(enemyNavGridForWorker);
             Map.bumpNavGridRevision?.("enemy_nav_grid_initialized");
-            // deep-clone polys so edits to enemy mesh don't mutate player mesh
-            const enemyPolys = (typeof structuredClone === "function")
+            // Deep-clone fallback polys so edits to enemy mesh don't mutate player mesh.
+            const enemySourcePolys = Array.isArray(enemyPolys) ? enemyPolys : ((typeof structuredClone === "function")
             ? structuredClone(polys)
             : polys.map(p => ({
                 ...p,
                 // common shapes in your worker output: "points" and "neighbors"
                 points: (p.points || []).map(pt => ({ x: pt.x, y: pt.y })),
                 neighbors: Array.isArray(p.neighbors) ? p.neighbors.slice() : [],
-                }));
+                })));
 
-            Map.enemyNavMesh = new NavMesh(enemyPolys);
+            Map.enemyNavMesh = new NavMesh(enemySourcePolys);
             for (const poly of Map.enemyNavMesh.getPolygons()) {
                 poly.parcelTag = "main";
                 poly.parcelTags = ["main"];
@@ -3053,7 +3081,13 @@ export class MainMenu {
         };
 
         const navGridForWorker = MainMenu._ensureNavGridForScene(scene, continueSnapshot);
-        worker.postMessage({ navGrid: navGridForWorker, gridData: scene.gridData });
+        const enemyNavGridForWorker = MainMenu._ensureEnemyNavGridForScene(scene, continueSnapshot, navGridForWorker);
+        worker.postMessage({
+            type: 'buildBoth',
+            navGrid: navGridForWorker,
+            enemyNavGrid: enemyNavGridForWorker,
+            gridData: scene.gridData
+        });
     }
 
 }

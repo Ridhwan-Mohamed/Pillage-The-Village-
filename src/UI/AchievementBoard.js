@@ -28,6 +28,7 @@ export class AchievementBoard {
     this._lastSignature = "";
     this._rowBySlot = new Map();
     this._completionTimers = new Map();
+    this._queuedCompletions = [];
     this._unseenCompletions = 0;
 
     this.root = scene.add.container(0, 0).setDepth((UIDEPTH ?? 0) + 18);
@@ -336,6 +337,12 @@ export class AchievementBoard {
   _animateCompletion(payload) {
     const completed = payload?.completed;
     if (!completed) return;
+    if (!this.root) return;
+    if (this._hiddenUntilDetailed || !this.root?.visible) {
+      this._queuedCompletions.push(payload);
+      this.scene.townXpHud?.refresh?.(true);
+      return;
+    }
 
     this._pulseHeader();
 
@@ -549,6 +556,15 @@ export class AchievementBoard {
         ease: "Quad.Out",
       });
     }
+    this.scene.time.delayedCall(wasHidden ? 220 : 40, () => this._flushQueuedCompletions());
+  }
+
+  _flushQueuedCompletions() {
+    if (!this.root || this._hiddenUntilDetailed || !this.root.visible || !this._queuedCompletions.length) return;
+    const queued = this._queuedCompletions.splice(0);
+    queued.forEach((payload, index) => {
+      this.scene.time.delayedCall(index * 180, () => this._animateCompletion(payload));
+    });
   }
 
   reposition() {
@@ -637,6 +653,7 @@ export class AchievementBoard {
     this.scene.scale.off("resize", this._resizeHandler);
     this._completionTimers.forEach((timer) => timer?.remove?.(false));
     this._completionTimers.clear();
+    this._queuedCompletions.length = 0;
     this.root?.destroy?.(true);
     this.root = null;
   }

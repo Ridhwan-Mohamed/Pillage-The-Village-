@@ -528,6 +528,7 @@ export class Wall {
     }else{
       GameMap.grid[this.y][this.x] = TILE_TYPES.grass.grid; // empty
     }
+    GameMap.recomputeNavForCell?.(this.x, this.y, "wall_destroy");
 
     // remove sprite
     if (this.sprite) {

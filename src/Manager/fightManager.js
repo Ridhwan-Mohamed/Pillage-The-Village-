@@ -38,6 +38,7 @@ export class fightManager{
         }
         if (opts.clearCooldown) {
             sprite._attackRecoveryUntil = 0;
+            sprite._rangedReloadUntil = 0;
         }
     }
 
@@ -404,6 +405,7 @@ export class fightManager{
             const leadPos = Projectile.leadAndAngle(sprite, target, weapon.speed);
             const angle = Phaser.Math.Angle.Between(sprite.x, sprite.y, leadPos.x, leadPos.y);
             new Projectile(sprite.x, sprite.y, angle, sprite.body.team, weapon, sprite);
+            Player.markRangedReload?.(sprite, weapon.duration);
             this._scheduleAttackRecovery(sprite, weapon);
             return;
         }

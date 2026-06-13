@@ -457,7 +457,7 @@ export default class FunctionTab {
       committed,
       batchActive,
       finishing: batchActive && remaining <= 0 && committed > 0,
-      total: Math.max(delivered + remaining, delivered || draft),
+      total: batchActive ? delivered + remaining : Math.max(delivered || draft, draft),
     };
   }
 
@@ -479,6 +479,7 @@ export default class FunctionTab {
       if (amount < 0 && automation.waterOrderId != null) {
         OrderRunner.trimManagedWaterOrder?.(automation.waterOrderId, nextRemaining, this.teamNumber);
       }
+      Teams.ensureTownAutomation?.(this.teamNumber);
       if (automation.waterRemainingCount <= 0 && automation.waterCommittedCount <= 0) {
         Teams.clearTownWaterBatch?.(this.teamNumber, automation.waterOrderId);
       }
@@ -982,9 +983,9 @@ export default class FunctionTab {
   }
 
   _setMainButtonLabel(button, label) {
-    if (!button || button.label === label) return;
-    button.label = label;
-    button.text.setText(label);
+    if (!button) return;
+    if (button.label !== label) button.label = label;
+    if (button.text?.text !== label) button.text?.setText(label);
   }
 
   _drawMainButton(button, active) {

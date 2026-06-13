@@ -71,6 +71,9 @@ export class Player {
     static IDLE_EMOTE_COOLDOWN_MS = 11000;
     static TIRED_EMOTE_COOLDOWN_MS = 9000;
     static TIRED_STAMINA_RATIO = 0.26;
+    static RELOAD_SPINNER_RADIUS = 6;
+    static RELOAD_SPINNER_OFFSET_Y = 34;
+    static RELOAD_SPINNER_SPIN_MS = 760;
     static FIGHTER_CLOSE_THREAT_RADIUS = SQUARESIZE * 2;
     static FIGHTER_RECENT_ATTACKER_MS = 3200;
     static FIGHTER_TARGET_STICKY_MS = 4200;
@@ -153,6 +156,7 @@ export class Player {
         this._dropTargetingAgainstUnit(player);
         OrderRunner.handleTroopDestroyed?.(player);
         AudioManager.onSpriteDestroyed?.(player);
+        this._destroyVisionBubble(player);
 
         // Call the troop-specific destroy logic if defined
         if (typeof player.destroySelf === 'function') {
@@ -195,6 +199,8 @@ export class Player {
         fightManager.clearAttackRecovery(player);
         fightManager.clearHitReaction(player);
         this._destroyMiniBars(player);
+        this._destroyReloadIndicator(player);
+        this._destroyVisionBubble(player);
         this._clearStatusEmote(player);
 
         this._releaseTaskAssignment(player);
@@ -263,25 +269,60 @@ export class Player {
     }
 
     static _updateVisibilityForTroop(troop) {
+        if (Number(troop?.body?.team ?? troop?._teamNumber ?? 0) !== 1) return;
+
         const gx = Math.floor(troop.x / SQUARESIZE);
         const gy = Math.floor(troop.y / SQUARESIZE);
 
-        if (gx !== troop.gridX || gy !== troop.gridY) {
-            // Move the troop’s vision bubble (VisibilitySystem will decide if it should repaint)
-            if (troop.visionId != null) {
-                VisibilitySystem.moveVisionBubble(troop.visionId, gx, gy, troop.visionRadius);
-            } else {
-                // Fallback if somehow missing id
-                troop.visionId = VisibilitySystem.addVisionBubble({
-                    x: gx,
-                    y: gy,
-                    r: troop.visionRadius,
-                    boost: troop.visionBoost ?? this.FRIENDLY_VISION_BOOST,
-                });
-            }
-            troop.gridX = gx;
-            troop.gridY = gy;
+        if (gx !== troop.gridX || gy !== troop.gridY || troop.visionId == null) {
+            this.ensureVisionBubble(troop);
         }
+    }
+
+    static _destroyVisionBubble(troop) {
+        if (!troop || troop.visionId == null) return;
+        VisibilitySystem.removeVisionBubble(troop.visionId);
+        troop.visionId = null;
+    }
+
+    static ensureVisionBubble(troop, { noRepaint = false } = {}) {
+        if (!troop?.active && troop?.active === false) return false;
+        const teamNum = Number(troop?.body?.team ?? troop?._teamNumber ?? 0);
+        if (teamNum !== 1) {
+            this._destroyVisionBubble(troop);
+            return false;
+        }
+
+        const gx = Math.floor(Number(troop.x || 0) / SQUARESIZE);
+        const gy = Math.floor(Number(troop.y || 0) / SQUARESIZE);
+        troop.gridX = gx;
+        troop.gridY = gy;
+        troop.visionRadius = troop.visionRadius ?? 6;
+        troop.visionBoost = troop.visionBoost ?? this.FRIENDLY_VISION_BOOST;
+
+        const hasBubble = troop.visionId != null &&
+            (VisibilitySystem.visionBubbles || []).some((bubble) => bubble?.id === troop.visionId);
+
+        if (hasBubble) {
+            VisibilitySystem.moveVisionBubble(troop.visionId, gx, gy, troop.visionRadius);
+        } else {
+            troop.visionId = VisibilitySystem.addVisionBubble({
+                x: gx,
+                y: gy,
+                r: troop.visionRadius,
+                boost: troop.visionBoost,
+            }, noRepaint);
+        }
+
+        if (!troop._visionDestroyBound) {
+            troop._visionDestroyBound = true;
+            troop.once?.("destroy", () => {
+                this._destroyVisionBubble(troop);
+                troop._visionDestroyBound = false;
+            });
+        }
+
+        return true;
     }
 
     static _resolveCarryVisual(troop) {
@@ -402,6 +443,100 @@ export class Player {
     static _destroySelectionIndicator(troop) {
         troop?._selectionIndicator?.destroy?.();
         if (troop) troop._selectionIndicator = null;
+    }
+
+    static markRangedReload(troop, durationMs = 0) {
+        if (!troop?.active) return;
+        const duration = Math.max(0, Number(durationMs) || 0);
+        troop._rangedReloadUntil = this._sceneNowMs(troop) + duration;
+    }
+
+    static _destroyReloadIndicator(troop) {
+        const indicator = troop?._reloadIndicator;
+        if (!indicator) return;
+        indicator.destroy?.(true);
+        troop._reloadIndicator = null;
+    }
+
+    static _hideReloadIndicator(troop) {
+        troop?._reloadIndicator?.setVisible(false);
+    }
+
+    static _ensureReloadIndicator(troop) {
+        if (troop._reloadIndicator || !this.scene || !troop) return troop._reloadIndicator;
+
+        const radius = this.RELOAD_SPINNER_RADIUS;
+        const shadow = this.scene.add.graphics();
+        shadow.fillStyle(0x000000, 0.34);
+        shadow.fillCircle(0, 0, radius + 1);
+        shadow.lineStyle(3, 0x000000, 0.82);
+        shadow.strokeCircle(0, 0, radius);
+
+        const arc = this.scene.add.graphics();
+        arc.lineStyle(2, 0xffffff, 0.98);
+        arc.beginPath();
+        arc.arc(0, 0, radius, Phaser.Math.DegToRad(-115), Phaser.Math.DegToRad(85), false);
+        arc.strokePath();
+        arc.lineStyle(1, 0xffffff, 0.72);
+        arc.beginPath();
+        arc.arc(0, 0, radius, Phaser.Math.DegToRad(92), Phaser.Math.DegToRad(132), false);
+        arc.strokePath();
+
+        const indicator = this.scene.add.container(troop.x, troop.y, [shadow, arc])
+            .setDepth((troop.depth ?? (BLOCKDEPTH + 1)) + 4)
+            .setVisible(false);
+
+        troop._reloadIndicator = indicator;
+        troop.once?.("destroy", () => {
+            if (troop._reloadIndicator === indicator) troop._reloadIndicator = null;
+            if (indicator.active !== false) indicator.destroy?.(true);
+        });
+
+        return indicator;
+    }
+
+    static _isReloadIndicatorTroop(troop) {
+        return !!(troop?.isGunslinger || troop?.isHunter);
+    }
+
+    static _isReloadingRangedWeapon(troop) {
+        if (!this._isReloadIndicatorTroop(troop) || !troop?.weapon?.projectile) return false;
+        if (troop.state === CONTROL_STATES.SLEEP_MODE || troop.visible === false || troop.alpha === 0) return false;
+
+        const reloadUntil = Number(troop._rangedReloadUntil || 0);
+        if (!(reloadUntil > this._sceneNowMs(troop))) {
+            troop._rangedReloadUntil = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    static _updateReloadIndicator(troop) {
+        const indicator = troop?._reloadIndicator;
+        if (!troop?.active || !troop?.scene) {
+            this._destroyReloadIndicator(troop);
+            return;
+        }
+
+        if (!this._isReloadingRangedWeapon(troop)) {
+            indicator?.setVisible(false);
+            return;
+        }
+
+        const container = this._ensureReloadIndicator(troop);
+        const yOffset = Math.max(
+            this.RELOAD_SPINNER_OFFSET_Y,
+            ((troop.displayHeight || SQUARESIZE) * 0.5) + 14
+        );
+        const now = this._sceneNowMs(troop);
+        const spinMs = Math.max(1, this.RELOAD_SPINNER_SPIN_MS);
+
+        container.setPosition(troop.x, troop.y - yOffset);
+        container.setDepth((troop.depth ?? (BLOCKDEPTH + 1)) + 4);
+        container.setRotation(((now % spinMs) / spinMs) * Math.PI * 2);
+        container.setAlpha(Phaser.Math.Clamp(Number(troop.alpha ?? 1), 0.35, 1));
+        container.setVisible(true);
     }
 
     static _clearStatusEmote(troop) {
@@ -667,24 +802,10 @@ export class Player {
     static configureCubeInteractivity(cube){
         cube.selected = false; // Add a custom property to track selection state
 
-        // Track last-known grid tile for visibility updates
-        cube.gridX = Math.floor(cube.x / SQUARESIZE);
-        cube.gridY = Math.floor(cube.y / SQUARESIZE);
-
-        // give the player its own vision bubble (centered on grid)
-        if (cube.body.team === 1) {
-            cube.visionRadius = cube.visionRadius ?? 6;
-            cube.visionBoost = cube.visionBoost ?? this.FRIENDLY_VISION_BOOST;
-            cube.visionId = VisibilitySystem.addVisionBubble({
-                x: cube.gridX,
-                y: cube.gridY,
-                r: cube.visionRadius,
-                boost: cube.visionBoost,
-            }, /*noRepaint=*/false);
-        }
-
         // Default per-unit vision radius in tiles (tweak as you like)
         cube.visionRadius = cube.visionRadius ?? 6;
+        cube.visionBoost = cube.visionBoost ?? this.FRIENDLY_VISION_BOOST;
+        this.ensureVisionBubble(cube);
 
         // Add a pointerdown event listener to toggle selection
         cube.on('pointerdown', (pointer) => {
@@ -3470,6 +3591,7 @@ export class Player {
                 troop.body.setVelocity(0, 0);
                 this._updateSelectionIndicator(troop);
                 this._updateCarryIndicator(troop);
+                this._updateReloadIndicator(troop);
                 return;
             }
 
@@ -3515,12 +3637,16 @@ export class Player {
             }
 
             // Swimming raiders drive their own velocity, so skip stamina+path
-            if (skipTail) return;
+            if (skipTail) {
+                this._updateReloadIndicator(troop);
+                return;
+            }
 
             if (this._handleWaterReturnSwim(troop)) {
                 this._updateMiniBars(troop);
                 this._updateSelectionIndicator(troop);
                 this._updateCarryIndicator(troop);
+                this._updateReloadIndicator(troop);
                 return;
             }
 
@@ -3534,6 +3660,7 @@ export class Player {
             this._updateMiniBars(troop);
             this._updateSelectionIndicator(troop);
             this._updateCarryIndicator(troop);
+            this._updateReloadIndicator(troop);
             troop.type?.postUpdate?.(troop);
         });
     }
@@ -3935,6 +4062,7 @@ export class Player {
 
         this.clearPoseLock(troop, troop.idle);
         this._clearStatusEmote(troop);
+        this._hideReloadIndicator(troop);
         troop.deferredCarry = null;
         troop.carrying = null;
         StorageManager.releaseDeliveryReservation(troop);

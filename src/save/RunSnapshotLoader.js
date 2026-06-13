@@ -534,7 +534,7 @@ function restoreSavedCropStates() {
       if (!sprite) continue;
       removeGeneratedCropPlaceholder(team, x, y);
 
-      const hasSeed = saved?.hasSeed !== false;
+      const hasSeed = saved?.hasSeed === true;
       const growthStage = Math.max(0, Math.min(MAX_CROP_GROWTH_STAGE, Number(saved?.growthStage || 0)));
       const harvestsRemaining = hasSeed && growthStage >= MAX_CROP_GROWTH_STAGE
         ? Math.max(1, Number(saved?.harvestsRemaining ?? Teams.CROP_HARVEST_CHARGES ?? 1))
@@ -615,6 +615,7 @@ function restorePlayers(scene, snapshot, buildingRegistry) {
     troop.timer?.remove?.(false);
     troop.timer = null;
     troop.body?.reset?.(troop.x, troop.y);
+    Player.ensureVisionBubble?.(troop);
     troops.push({ troop, saved });
   }
 
@@ -739,6 +740,7 @@ export function restoreRunSnapshotIntoScene(scene, snapshot) {
 
     for (const troop of Player.troops || []) {
       if (!troop?.active || Number(troop.body?.team ?? troop._teamNumber ?? 0) !== 1) continue;
+      Player.ensureVisionBubble?.(troop);
       Scheduler.stepUnit(troop);
     }
   } finally {

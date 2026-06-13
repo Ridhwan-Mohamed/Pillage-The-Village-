@@ -11,6 +11,37 @@ import { getMarketWorkDuration } from "../Cards/MarketBuffs";
 export class tillManager {
     static scene;
 
+    static _markCropSeeded(x, y, teamNumber = 1) {
+        const teamKey = `${teamNumber}`;
+        const team = Teams.teamLists?.[teamKey];
+        if (!team) return null;
+
+        let crop = Teams.getCropAt(x, y, teamKey);
+        if (!crop) {
+            crop = {
+                sprite: Map.cropDict?.[`${x},${y}`] || null,
+                x,
+                y,
+                teamNumber: teamKey,
+                dailyWatered: false,
+                growthStage: 0,
+                hasSeed: true,
+                harvestsRemaining: 0,
+            };
+            team.crops.push(crop);
+        }
+
+        crop.hasSeed = true;
+        crop.growthStage = 0;
+        crop.harvestsRemaining = 0;
+        crop.dailyWatered = false;
+        crop.sprite = crop.sprite || Map.cropDict?.[`${x},${y}`] || null;
+        crop.sprite?.setFrame?.(1);
+        if (crop.sprite) crop.sprite.hasSeed = true;
+        Teams.setCropForWatering(crop);
+        return crop;
+    }
+
     static assignTilesToTroops(teamNumber) {
         const tillList = Teams.teamLists['1'].tileList;
         const force = Player.selected.length? true : false;
@@ -129,12 +160,7 @@ export class tillManager {
 
             if (existingCrop) {
                 // reseed existing crop
-                existingCrop.hasSeed = true;
-                existingCrop.growthStage = 0;
-                existingCrop.harvestsRemaining = 0;
-                existingCrop.dailyWatered = false;
-                existingCrop.sprite.setFrame(1); // seeded soil
-                Teams.setCropForWatering(existingCrop);
+                this._markCropSeeded(x, y, sprite.body.team);
             } else {
                 // plant new crop
                 Map.grid[y][x] = TILE_TYPES.crops.grid;
@@ -153,6 +179,7 @@ export class tillManager {
                     );
                 }
                 // add to Teams.teamLists[team].crops as usual, with sprite frame 1
+                this._markCropSeeded(x, y, sprite.body.team);
             }
             this.scene.removeTillPreviewSprite(x, y);
             StorageManager.removeCarriedItem(sprite);

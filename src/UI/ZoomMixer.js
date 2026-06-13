@@ -21,8 +21,10 @@ export class ZoomMixer {
     this.IN_THRESHOLD  = 0.58;
     this.OUT_THRESHOLD = 0.50;
     this.detailedZoom = 1.0;
-    this.overviewZoom = 0.3;
+    this.overviewZoom = 0.36;
     this.targetZoom = this.detailedZoom;
+    this._centerZoomTransitionActive = false;
+    this._centerZoomTween = null;
 
     this.overviewImage = null;
     this.texKey = 'mapOverview';
@@ -199,6 +201,9 @@ export class ZoomMixer {
     for (const tweens of this._getTweenManagers()) {
       tweens.killTweensOf?.(target);
     }
+    if (target === ZoomMixer.scene?.cameras?.main) {
+      this._clearCenterZoomTransition();
+    }
   }
 
   _addUnscaledTween(config) {
@@ -208,6 +213,22 @@ export class ZoomMixer {
       ...config,
       timeScale: config.timeScale ?? this._unscaledTweenTimeScale(),
     });
+  }
+
+  _clearCenterZoomTransition(tween = null) {
+    if (tween && this._centerZoomTween && tween !== this._centerZoomTween) return;
+    this._centerZoomTransitionActive = false;
+    this._centerZoomTween = null;
+  }
+
+  isCenterZoomTransitionActive() {
+    return !!this._centerZoomTransitionActive;
+  }
+
+  requestCenterZoomTo(targetZoom, duration = 300, ease = 'Quad.easeInOut') {
+    if (this.isCenterZoomTransitionActive()) return false;
+    this.targetZoom = targetZoom;
+    return this.smoothCenterZoomTo(targetZoom, duration, ease) !== false;
   }
 
   _getWorldPixelSize() {
@@ -412,8 +433,8 @@ export class ZoomMixer {
   // Zoom to targetZoom around the camera center (no pointer reference)
   smoothCenterZoomTo(targetZoom, duration = 300, ease = 'Quad.easeInOut') {
     const scene = ZoomMixer.scene;
-    if (!scene) return;
-    if (this.zoomOutLocked || scene.stageCompleteLock) return;
+    if (!scene) return false;
+    if (this.zoomOutLocked || scene.stageCompleteLock || this.isCenterZoomTransitionActive()) return false;
     const cam   = scene.cameras.main;
     const currentZoom = cam?.zoom ?? targetZoom;
     if (Math.abs(currentZoom - targetZoom) < 0.01) {
@@ -422,7 +443,7 @@ export class ZoomMixer {
       } else if (targetZoom >= this.IN_THRESHOLD && this.mode !== "detailed") {
         this.swapMode("detailed");
       }
-      return;
+      return true;
     }
 
     AudioManager.playWhoosh({ volume: 0.32 });
@@ -451,14 +472,24 @@ export class ZoomMixer {
       }
     };
 
-    this._addUnscaledTween({
+    this._centerZoomTransitionActive = true;
+    const tween = this._addUnscaledTween({
       targets: cam,
       zoom: targetZoom,
       duration,
       ease,
       onUpdate: syncModeForZoom,
-      onComplete: syncModeForZoom
+      onComplete: () => {
+        syncModeForZoom();
+        self._clearCenterZoomTransition(tween);
+      },
+      onStop: () => self._clearCenterZoomTransition(tween),
+      onCompleteScope: this,
+      onStopScope: this
     });
+    this._centerZoomTween = tween;
+    if (!tween) this._clearCenterZoomTransition();
+    return !!tween;
   }
 
   swapMode(mode, duration = 350) {
@@ -554,9 +585,9 @@ export class ZoomMixer {
     };
     scene.input.keyboard.on('keydown-Z', () => {
       if (isTyping()) return;
+      if (this.isCenterZoomTransitionActive()) return;
       const targetZoom = this.mode === "overview" ? zoomIn : zoomOut;
-      this.targetZoom = targetZoom;
-      this.smoothCenterZoomTo(targetZoom);
+      this.requestCenterZoomTo(targetZoom);
     });
   }
 
@@ -927,17 +958,17 @@ export function createZoomButtons(scene, opts = {}) {
   zoomInBtn.bg.on('pointerdown', () => {
     const zm = scene.zoomMixer;
     if (!zm) return;
+    if (zm.isCenterZoomTransitionActive?.()) return;
     const detailedZoom = zm.detailedZoom ?? 1;
-    zm.targetZoom = detailedZoom;
-    zm.smoothCenterZoomTo(detailedZoom);
+    zm.requestCenterZoomTo?.(detailedZoom) ?? zm.smoothCenterZoomTo(detailedZoom);
   });
 
   zoomOutBtn.bg.on('pointerdown', () => {
     const zm = scene.zoomMixer;
     if (!zm) return;
-    const overviewZoom = zm.overviewZoom ?? 0.3;
-    zm.targetZoom = overviewZoom;
-    zm.smoothCenterZoomTo(overviewZoom);
+    if (zm.isCenterZoomTransitionActive?.()) return;
+    const overviewZoom = zm.overviewZoom ?? 0.36;
+    zm.requestCenterZoomTo?.(overviewZoom) ?? zm.smoothCenterZoomTo(overviewZoom);
   });
 
   return ui;

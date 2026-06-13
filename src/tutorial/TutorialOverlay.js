@@ -14,7 +14,7 @@ const BODY_TEXT_COLOR = "#f4fbff";
 const KEYWORD_STROKE = "#04111a";
 
 const TUTORIAL_TERM_STYLES = [
-  { terms: ["Cleared to Build"], color: "#9ee7ff", strokeThickness: 4 },
+  { terms: ["Permit Approved!"], color: "#9ee7ff", strokeThickness: 4 },
   { terms: ["Functions tab", "Functions"], color: "#8f7cff", strokeThickness: 3 },
   { terms: ["Store tab", "Store"], color: "#ff97c2", strokeThickness: 3 },
   { terms: ["Cards tab", "Cards"], color: "#ffdd73", strokeThickness: 3 },

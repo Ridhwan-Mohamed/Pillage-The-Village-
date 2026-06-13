@@ -31,6 +31,7 @@ export class Turret {
     this.tileType = TILE_TYPES.turret;
     this.type = this.tileType;
     this.weapon = opts.weapon ?? weapons.turret;
+    this.canShootThroughFriendlyWalls = opts.canShootThroughFriendlyWalls ?? this.weapon?.shootThroughFriendlyWalls ?? true;
     this.maxHealth = opts.maxHealth ?? this.tileType.maxHealth ?? 320;
     this.health = opts.health ?? this.maxHealth;
     this.isTemporaryMilitia = !!opts.isTemporaryMilitia;
@@ -74,6 +75,8 @@ export class Turret {
     this.sprite.buildingRef = this;
     this.topSprite.buildingRef = this;
     this.collider.buildingRef = this;
+    this.topSprite.weapon = this.weapon;
+    this.topSprite.canShootThroughFriendlyWalls = this.canShootThroughFriendlyWalls;
 
     this.sprite.isBuilding = true;
     this.topSprite.isBuilding = true;

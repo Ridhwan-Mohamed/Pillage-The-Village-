@@ -19,7 +19,7 @@ import bomberSwimUp from 'url:../assets/Players/bombers/bomber_swim_up.png';
 import bomberSwimDown from 'url:../assets/Players/bombers/bomber_swim_down.png';
 import bomberSwimRight from 'url:../assets/Players/bombers/bomber_swim_right.png';
 
-const ARM_DURATION_MS = 5000;
+const ARM_DURATION_MS = 3000;
 const HIT_STUN_RESTART_MS = 850;
 const BLAST_RADIUS = SQUARESIZE * 2.4;
 const PLAYER_DAMAGE = 95;
@@ -165,6 +165,10 @@ export class Bomber {
         troop.currentPath?.splice?.(0);
         Player.setAnimState?.(troop, troop.idle);
         Teams.movePlayerState(troop, CONTROL_STATES.DESTROY_MODE);
+        troop._bomberSizzleSound = AudioManager.playWorldSoundInstance?.("sfx_bomber_sizzle", {
+            volume: 0.34,
+            rate: 1,
+        }) ?? null;
 
         let pulse = 0;
         troop._bomberFlashEvent = scene.time.addEvent({
@@ -214,6 +218,8 @@ export class Bomber {
         troop.scene?.tweens?.killTweensOf?.(troop._bomberPulseRing);
         troop._bomberPulseRing?.destroy?.();
         troop._bomberPulseRing = null;
+        AudioManager.stopManagedSound?.(troop._bomberSizzleSound);
+        troop._bomberSizzleSound = null;
         troop.clearTint?.();
     }
 
@@ -233,7 +239,10 @@ export class Bomber {
     }
 
     static _playExplosionFx(scene, x, y) {
-        AudioManager.playWorldSound?.("sfx_end_stage_explosions");
+        AudioManager.playWorldSound?.("sfx_bomber_explosion", {
+            volume: 0.42,
+            rate: 1,
+        });
         if (scene?.anims?.exists?.("explosions") && scene.textures.exists("explosions")) {
             const fx = scene.add.sprite(x, y, "explosions").setDepth(999).setScale(1.15);
             fx.play("explosions");

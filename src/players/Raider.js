@@ -5,6 +5,7 @@ import { AudioManager } from "../Manager/AudioManager";
 import { Teams } from "../Teams";
 import { Manager } from "../Manager/Manager";
 import { Map } from "../map";
+import { Wall } from "../buildings/Wall";
 import { weapons } from "../weapons";
 import { pickRaidApproachForPOI, recalculateDestroyTasksFromPoint } from "../Manager/spawnManager";
 import { SiegePlanner } from "../lib/navmesh/SiegePlanner"
@@ -415,6 +416,22 @@ export class Raider {
         const onWater = Player._isOnWater?.(troop) === true;
         const recovering = troop._enemyWaterRecovery === true;
         const swimming = troop.isSwimming === true;
+
+        if (troop.task?.siege) {
+            return false;
+        }
+
+        const shoreWall = Raider._adjacentBreachableWallTile(troop);
+        const now = Raider._now(troop);
+        const shoreWallHandoffActive = shoreWall && now < Number(troop._shoreWallBreachUntil || 0);
+        if (
+            shoreWall &&
+            (shoreWallHandoffActive || swimming || recovering || onWater || (!onEnemyLand && !onWater))
+        ) {
+            Raider._handoffWaterRecoveryToShoreBreach(troop, shoreWall);
+            return false;
+        }
+
         if (!recovering && !swimming && !onWater) return false;
 
         if (onWater && !swimming) {
@@ -472,6 +489,20 @@ export class Raider {
             troop.rotation = Phaser.Math.Angle.Between(0, 0, vx, vy);
         }
 
+        return true;
+    }
+
+    static _handoffWaterRecoveryToShoreBreach(troop, wallTile = null) {
+        if (!troop?.active) return false;
+        troop.isSwimming = false;
+        troop._enemyWaterRecovery = false;
+        troop._enemyWaterRecoveryTarget = null;
+        troop._shoreWallBreachHint = wallTile || null;
+        troop._shoreWallBreachUntil = Raider._now(troop) + 1800;
+        troop.body?.setVelocity?.(0, 0);
+        troop.currentPath?.splice?.(0);
+        troop.finalPos = null;
+        Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
         return true;
     }
 
@@ -1028,6 +1059,82 @@ export class Raider {
         return Map.siegePlanner;
     }
 
+    static _troopTile(troop) {
+        if (!troop) return null;
+        const x = Math.floor(Number(troop.x || 0) / SQUARESIZE);
+        const y = Math.floor(Number(troop.y || 0) / SQUARESIZE);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return { x, y };
+    }
+
+    static _adjacentBreachableWallTile(troop) {
+        const tile = Raider._troopTile(troop);
+        if (!tile) return null;
+
+        const offsets = [
+            [0, 0],
+            [0, -1],
+            [0, 1],
+            [1, 0],
+            [-1, 0],
+        ];
+
+        for (const [dx, dy] of offsets) {
+            const x = tile.x + dx;
+            const y = tile.y + dy;
+            const wall = Wall.getAt?.(x, y);
+            if (!wall?.active) continue;
+            if (Number(wall.team) === Number(troop?.body?.team)) continue;
+            if (!Map._wallStructureInfoAt?.(x, y)) continue;
+            return { x, y };
+        }
+
+        return null;
+    }
+
+    static _fallbackAdjacentBreachTiles(troop) {
+        const hinted = troop?._shoreWallBreachHint;
+        const hintedWall = hinted ? Wall.getAt?.(hinted.x, hinted.y) : null;
+        if (
+            hintedWall?.active &&
+            Number(hintedWall.team) !== Number(troop?.body?.team) &&
+            Map._wallStructureInfoAt?.(hinted.x, hinted.y)
+        ) {
+            return [{ x: hinted.x, y: hinted.y }];
+        }
+
+        const tile = Raider._adjacentBreachableWallTile(troop);
+        return tile ? [tile] : [];
+    }
+
+    static _canStartSiegeTaskInPlace(troop, task) {
+        if (!troop?.active || !task?.siege) return false;
+        const tile = Raider._troopTile(troop);
+        if (!tile) return false;
+        const tx = Number(task.x ?? task.tx);
+        const ty = Number(task.y ?? task.ty);
+        if (!Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+        return Math.abs(tile.x - tx) + Math.abs(tile.y - ty) <= 1;
+    }
+
+    static _assignSiegeTaskInPlace(troop, task) {
+        if (!Raider._canStartSiegeTaskInPlace(troop, task)) return false;
+        if (Manager.tooManyAssigned?.(task, CONTROL_STATES.DESTROY_MODE_T)) return false;
+
+        troop.currentPath?.splice?.(0);
+        troop.finalPos = null;
+        troop.body?.setVelocity?.(0, 0);
+        troop.roam = false;
+        troop.task = task;
+        task.assigned = Math.max(0, Number(task.assigned || 0)) + 1;
+        troop.destX = Math.floor(troop.x / SQUARESIZE);
+        troop.destY = Math.floor(troop.y / SQUARESIZE);
+        Manager._setTaskMeta?.(troop, task, CONTROL_STATES.DESTROY_MODE_T, "siegeTileStates");
+        Teams.movePlayerState(troop, CONTROL_STATES.DESTROY_MODE_T);
+        Player.doAction?.(troop);
+        return true;
+    }
+
     // task → footprint for POI buildings
     static _taskToFootprint(task) {
         if (!task) return null;
@@ -1076,7 +1183,10 @@ export class Raider {
 
         const targets = SiegePlanner.buildPerimeterTargets(fp.x, fp.y, fp.w, fp.h, gridW, gridH);
         const planner = Raider._ensureSiegePlanner?.();
-        const breachTiles = planner?.planBreach?.(troop.x, troop.y, targets);
+        let breachTiles = planner?.planBreach?.(troop.x, troop.y, targets);
+        if (!breachTiles?.length) {
+            breachTiles = Raider._fallbackAdjacentBreachTiles(troop);
+        }
         if (!breachTiles?.length) return false;
 
         const team0 = Teams.teamLists["0"];
@@ -1119,7 +1229,7 @@ export class Raider {
         Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
 
         const taskObtained = Manager.assignTaskToTroop(troop, queuedTasks[0], CONTROL_STATES.DESTROY_MODE_T);
-        if (taskObtained) return true;
+        if (taskObtained || Raider._assignSiegeTaskInPlace(troop, queuedTasks[0])) return true;
 
         for (const siegeTask of queuedTasks) {
             Teams.removeFromStateArray("0", "siegeTileStates", siegeTask);
@@ -1171,7 +1281,9 @@ export class Raider {
             next.assigned = next.assigned ?? 0;
 
             // Manager owns state + pathing
-            Manager.assignTaskToTroop(troop, next, CONTROL_STATES.DESTROY_MODE_T);
+            if (!Manager.assignTaskToTroop(troop, next, CONTROL_STATES.DESTROY_MODE_T)) {
+                Raider._assignSiegeTaskInPlace(troop, next);
+            }
             return;
         }
 
@@ -1256,9 +1368,11 @@ export class Raider {
         if (!troop || !troop.body) return;
         const scene = troop.scene;
         const silentStageCleanup = !!opts.silentStageCleanup;
+        const taskReleasedBySiegeCleanup = !!troop.task?.siege;
 
         fightManager.clearAttackRecovery(troop);
         fightManager.clearHitReaction(troop);
+        Raider._releaseSiegeTasks(troop);
         Player._dropTargetingAgainstUnit?.(troop);
         Player._playDeathAnimation?.(troop);
         Player._destroyMiniBars(troop)
@@ -1290,7 +1404,7 @@ export class Raider {
 
         // Drop task cleanly
         if (troop.task) {
-            if (typeof troop.task.assigned === "number") troop.task.assigned--;
+            if (!taskReleasedBySiegeCleanup && typeof troop.task.assigned === "number") troop.task.assigned--;
             troop.task = null;
         }
 

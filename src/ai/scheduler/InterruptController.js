@@ -10,12 +10,18 @@ export class InterruptController {
 
         const ctx = this._snapshot(troop, reason, targetState);
         const shouldDeferCarry = this._isDeferredCarryTask(ctx);
+        const shouldReleaseSiege =
+            troop.body?.team === 0 &&
+            (ctx.task?.siege || (Array.isArray(troop._siegeQueue) && troop._siegeQueue.length > 0));
 
         if (ctx.task && !shouldDeferCarry) {
             this.releaseTaskClaim(ctx);
         }
         if (ctx.task && shouldDeferCarry) {
             this.deferCarryTask(ctx);
+        }
+        if (shouldReleaseSiege) {
+            troop.type?._releaseSiegeTasks?.(troop);
         }
 
         if (troop.timer) {

@@ -6060,7 +6060,7 @@ export class mapView extends Phaser.Scene {
     }
 
     _describeCropHover(crop = null) {
-        const seeded = crop?.hasSeed !== false;
+        const seeded = crop?.hasSeed === true;
         const watered = !!crop?.dailyWatered;
         const maxStage = Math.max(0, Number(MAX_CROP_GROWTH_STAGE || 0));
         const safeStage = Math.max(0, Math.min(maxStage, Number(crop?.growthStage || 0)));

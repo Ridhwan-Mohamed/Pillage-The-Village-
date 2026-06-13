@@ -178,6 +178,7 @@ export class buildingManager{
 
         this.prepareQueuedWallJobPlans(teamNumber);
         this.refreshQueuedTileBuildGhosts(teamNumber);
+        this.assingTroopsToBuildTile?.(teamNumber);
     }
 
     static createWallJobId(teamNumber = 1) {
@@ -605,15 +606,32 @@ export class buildingManager{
         if (now < until) return true;
         task._deferredUntil = 0;
         task._deferredReason = null;
+        task._deferredRetryEvent?.remove?.(false);
+        task._deferredRetryEvent = null;
         return false;
     }
 
     static _deferQueuedBuildTask(task, reason = "blocked", delayMs = 350) {
         if (!task) return;
+        const delay = Math.max(100, Number(delayMs) || 350);
+        const teamNumber = Number(task.teamNumber ?? task.value?.teamNumber ?? 1) || 1;
         task._deferredReason = reason;
-        task._deferredUntil = this._now() + Math.max(100, Number(delayMs) || 350);
+        task._lastDeferredReason = reason;
+        task._deferredCount = Math.max(0, Number(task._deferredCount || 0)) + 1;
+        task._deferredUntil = this._now() + delay;
         task._constructionStarted = false;
         task._buildStartedAt = null;
+        task._deferredRetryEvent?.remove?.(false);
+        task._deferredRetryEvent = this.scene?.time?.delayedCall?.(delay + 25, () => {
+            task._deferredRetryEvent = null;
+            const team = Teams.teamLists?.[teamNumber] ?? Teams.teamLists?.[`${teamNumber}`];
+            const queueKey = task.queueKey || "buildingTileStates";
+            if (!Array.isArray(team?.[queueKey]) || !team[queueKey].includes(task)) return;
+            task._deferredUntil = 0;
+            task._deferredReason = null;
+            this.updateConstructionHoverText(task);
+            this.assingTroopsToBuildTile?.(teamNumber);
+        });
         this._stopConstructionTaskUiTicker(task);
         this.updateConstructionHoverText(task);
     }
@@ -865,6 +883,12 @@ export class buildingManager{
             x >= bounds.minX && x <= bounds.maxX &&
             y >= bounds.minY && y <= bounds.maxY;
 
+        const currentlyWalkableForBuilders = (x, y) => {
+            const derived = Map._deriveNavStateForCell?.(x, y);
+            if (derived) return derived.player === 1;
+            return Map.navGrid?.[y]?.[x] === 1;
+        };
+
         const standable = (x, y) => {
             if (!inBounds(x, y)) return false;
             const key = this._tileKey(x, y);
@@ -874,7 +898,7 @@ export class buildingManager{
             if (queued && queued.wallJobId !== task.wallJobId) return false;
 
             if (sameJobQueued.has(key)) {
-                return Map.navGrid?.[y]?.[x] === 1;
+                return currentlyWalkableForBuilders(x, y);
             }
 
             return Map.navGrid?.[y]?.[x] === 1;
@@ -1177,7 +1201,7 @@ export class buildingManager{
 
         if (isDoor) {
             const angle = up && down ? 90 : (left && right ? 0 : ((up || down) ? 90 : 0));
-            return { key: typeName, angle, alpha: 0.72 };
+            return { key: typeName, angle, alpha: 0.46, isDoor: true };
         }
 
         const def = family === "wood" ? TILE_TYPES.woodWall : TILE_TYPES.wall;
@@ -1204,7 +1228,8 @@ export class buildingManager{
         return {
             key,
             angle: this._queuedWallPieceAngle(gridVal, family),
-            alpha: 0.68,
+            alpha: 0.4,
+            isDoor: false,
         };
     }
 
@@ -1213,7 +1238,8 @@ export class buildingManager{
         const isWallJobTask = this._isQueuedWallTask(task) && !!task?.wallJobId;
 
         sprite.on("pointerover", () => {
-            sprite.setAlpha(Math.max(Number(task._ghostBaseAlpha || sprite.alpha || 0.68), 0.68) + 0.17);
+            const baseAlpha = Math.max(0.1, Number(task._ghostBaseAlpha || sprite.alpha || 0.68));
+            sprite.setAlpha(Math.min(baseAlpha + 0.16, 0.84));
             if (isWallJobTask) this.setQueuedWallJobHover(task.wallJobId, teamNumber);
         });
 
@@ -1777,17 +1803,7 @@ export class buildingManager{
         if (!task?._navBlocked) return;
 
         const blockTiles = this._blockBuildTiles(task);
-        for (const tile of blockTiles) {
-            if (Map.navGrid?.[tile.y]) Map.navGrid[tile.y][tile.x] = 1;
-            if (Map.enemyNavGrid?.[tile.y]) Map.enemyNavGrid[tile.y][tile.x] = 1;
-        }
-
-        try {
-            this.NavMeshUpdater?.blockTiles?.(blockTiles, true);
-            this.EnemyNavMeshUpdater?.blockTiles?.(blockTiles, true);
-        } catch (e) {
-            console.warn("queued block build nav restore skipped", e);
-        }
+        this._recomputeLiveNavForCells(blockTiles, "queued_block_build_nav_restore");
 
         task._navBlocked = false;
         this._markQueuedBlockBuildAreaDirty();
@@ -1853,9 +1869,9 @@ export class buildingManager{
             else if (isHoveredJob) sprite.setTintFill(0xfff2bf);
 
             const resolvedAlpha = isSelectedJob
-                ? 1
+                ? Math.min(display.alpha + (display.isDoor ? 0.28 : 0.26), display.isDoor ? 0.74 : 0.68)
                 : isHoveredJob
-                    ? Math.max(display.alpha + 0.28, 0.98)
+                    ? Math.min(display.alpha + (display.isDoor ? 0.18 : 0.16), display.isDoor ? 0.64 : 0.58)
                     : display.alpha;
             sprite.setAlpha(resolvedAlpha);
             sprite.setDepth(BLOCKDEPTH + (isSelectedJob ? 0.32 : isHoveredJob ? 0.24 : 0.15));
@@ -2279,6 +2295,36 @@ export class buildingManager{
         for (const unit of impacted) {
             PathRepair.repairUnitPath(unit, change.removedPolyIds, navMesh);
         }
+    }
+
+    static _syncNavMeshCells(updater, navMesh, cells, unblock = false) {
+        if (!updater?.blockTiles || !cells?.length) return;
+        const tiles = cells.map(({ x, y }) => ({ x, y }));
+        const change = unblock ? updater.blockTiles(tiles, true) : updater.blockTiles(tiles);
+        this._repairUnitPathsForNavChange(navMesh, change);
+    }
+
+    static _recomputeLiveNavForCells(cells, reason = "nav_recompute", opts = {}) {
+        const recomputed = Map.recomputeNavForCells?.(cells, reason);
+        if (!recomputed) return false;
+
+        if (opts.updateNavMesh !== false) {
+            try {
+                this._syncNavMeshCells(this.NavMeshUpdater, Map.navMesh, recomputed.playerBlocked, false);
+                this._syncNavMeshCells(this.NavMeshUpdater, Map.navMesh, recomputed.playerOpen, true);
+                this._syncNavMeshCells(this.EnemyNavMeshUpdater, Map.enemyNavMesh, recomputed.enemyBlocked, false);
+                this._syncNavMeshCells(this.EnemyNavMeshUpdater, Map.enemyNavMesh, recomputed.enemyOpen, true);
+            } catch (e) {
+                console.warn(`${reason} navmesh recompute skipped`, e);
+            }
+        }
+
+        if (recomputed.changed) {
+            this._markQueuedBlockBuildAreaDirty();
+            Map.enemyRegionSystem?.ensureUpToDate?.();
+        }
+
+        return recomputed.changed;
     }
 
     static _blockLiveNavFootprint(blockTiles, warningLabel = "building footprint") {
@@ -2849,8 +2895,7 @@ export class buildingManager{
                         }
                     }
                 } else {
-                    Map.navGrid[y][x] = 1;
-                    Map.enemyNavGrid[y][x] = 1;
+                    this._recomputeLiveNavForCells([{ x, y }], "tile_build_nav_recompute");
                 }
 
                 Map.drawGridValue(x, y, 1);
@@ -3386,8 +3431,10 @@ export class buildingManager{
                 );
 
                 // cadence: schedule next shot if task still alive
+                const reloadDuration = this._destroyAttackDuration(sprite);
+                Player.markRangedReload?.(sprite, reloadDuration);
                 if (sprite.timer) { sprite.timer.remove(false); sprite.timer = null; }
-                sprite.timer = this.scene.time.delayedCall(this._destroyAttackDuration(sprite), () => {
+                sprite.timer = this.scene.time.delayedCall(reloadDuration, () => {
                     if (!sprite.task) return;
                     this.beginDestroyingBlock(sprite);
                 });
@@ -3488,8 +3535,10 @@ export class buildingManager{
 
 
             // cadence: keep shooting until destroyed (don’t rely on `destroyed` here)
+            const reloadDuration = this._destroyAttackDuration(sprite);
+            Player.markRangedReload?.(sprite, reloadDuration);
             if (sprite.timer) { sprite.timer.remove(false); sprite.timer = null; }
-            sprite.timer = this.scene.time.delayedCall(this._destroyAttackDuration(sprite), () => {
+            sprite.timer = this.scene.time.delayedCall(reloadDuration, () => {
                 if (!sprite.task) return;
                 this.beginDestroyingTile(sprite);
             });
@@ -3626,9 +3675,6 @@ export class buildingManager{
                 if (Array.isArray(Map.grid[row][col])) {
                     Map.grid[row][col] = Map.grid[row][col][0];
                 }
-
-                if (Map.navGrid?.[row]) Map.navGrid[row][col] = 1;
-                if (Map.enemyNavGrid?.[row]) Map.enemyNavGrid[row][col] = 1;
             }
         }
 
@@ -3643,15 +3689,9 @@ export class buildingManager{
         }
 
         if (opts.updateNavMesh !== false) {
-            const change = this.NavMeshUpdater?.blockTiles?.(blockTiles, true);
-            if (change?.removedPolyIds) {
-                PathRegistry.handlePolysRemoved(Map.navMesh, change.removedPolyIds, change.addedPolyIds);
-            }
-
-            const enemyChange = this.EnemyNavMeshUpdater?.blockTiles?.(blockTiles, true);
-            if (enemyChange?.removedPolyIds) {
-                PathRegistry.handlePolysRemoved(Map.enemyNavMesh, enemyChange.removedPolyIds, enemyChange.addedPolyIds);
-            }
+            this._recomputeLiveNavForCells(blockTiles, "block_footprint_clear", opts);
+        } else {
+            Map.recomputeNavForCells?.(blockTiles, "block_footprint_clear");
         }
 
         Map.regionSystem?.markDirty?.();
@@ -3665,7 +3705,6 @@ export class buildingManager{
 
     static _completeDestroyTile(sprite, task, tx, ty, options = {}) {
         const wall = Wall.getAt(tx, ty);
-        const ownerTeam = wall?.team ?? 1;
         const destroyJobId = task?.destroyJobId ?? null;
         const {
             countRaiderSiegeProgress = true,
@@ -3678,36 +3717,10 @@ export class buildingManager{
 
         // remove wall sprite + clear grid overlay
         Wall.destroyAt(tx, ty);
-
-        // walkable for BOTH teams now (door logic handled below)
-        Map.navGrid[ty][tx] = 1;
-        Map.enemyNavGrid[ty][tx] = 1;
+        this._recomputeLiveNavForCells([{ x: tx, y: ty }], "destroy_tile_nav_recompute");
 
         // Patch the overview texture locally after the wall overlay is removed.
         this.scene?.zoomMixer?.updateOverviewCell?.(tx, ty, Map.grid);
-
-        // --- navmesh unblock rules ---
-        // Walls (woodWall/wall) unblock BOTH meshes.
-        // Doors: you were treating doors as "enemy-block" only when placed; once destroyed, unblock enemy mesh, and player mesh is already unblocked.
-        const typeName = task?.type?.name;
-
-        const isDoor = (typeName === "wall_door" || typeName === "woodWall_door");
-        const unblockPlayer = !isDoor || ownerTeam === 0;
-        const unblockEnemy = !isDoor || ownerTeam !== 0;
-
-        if (unblockPlayer) {
-            const changed = this.NavMeshUpdater.blockTiles([{ x: tx, y: ty }], true);
-            if (changed?.removedPolyIds) {
-            PathRegistry.handlePolysRemoved(Map.navMesh, changed.removedPolyIds, changed.addedPolyIds);
-            }
-        }
-
-        if (unblockEnemy) {
-            const enemyChanged = this.EnemyNavMeshUpdater.blockTiles([{ x: tx, y: ty }], true);
-            if (enemyChanged?.removedPolyIds) {
-                PathRegistry.handlePolysRemoved(Map.enemyNavMesh, enemyChanged.removedPolyIds, enemyChanged.addedPolyIds);
-            }
-        }
 
         // region/border maintenance (siege)
         Map.enemyRegionSystem?.removeWallFromBorderIndex?.(tx, ty);

@@ -1,4 +1,5 @@
 import { Teams } from "../Teams.js";
+import { getNightHordeSettings } from "../balance/GameBalance.js";
 import { SaveManager } from "../save/SaveManager.js";
 
 const TEAM_ID = "1";
@@ -8,6 +9,12 @@ const MAX_HOUSE_GOAL_TARGET = 4;
 const MAX_STORAGE_GOAL_TARGET = 2;
 const MAX_OVEN_GOAL_TARGET = 2;
 const MAX_NORMAL_NIGHTS_SURVIVED_TARGET = 5;
+const MAX_DEMO_PARCEL_GOAL_TARGET = 6;
+const MAX_DEMO_FIGHTER_GOAL_TARGET = 8;
+const MAX_DEMO_POPULATION_GOAL_TARGET = 10;
+const MAX_DEMO_STOCKPILE_GOAL_TARGET = 40;
+const MAX_DEMO_CASH_GOAL_TARGET = 1000;
+const DEMO_SCHEDULED_NORMAL_RAIDER_TOTAL = getScheduledNormalRaiderTotal(MAX_NORMAL_NIGHTS_SURVIVED_TARGET);
 
 const SLOT_META = Object.freeze({
   build: {
@@ -36,8 +43,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "build_house_total_1",
       family: "housing",
       title: "Raise Shelter",
-      description: "Build a house for the town.",
+      description: "Build 1 house after this goal appears.",
       metric: "houses",
+      mode: "delta",
       target: 1,
       reward: { xp: 12, money: 40 },
     },
@@ -45,8 +53,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "build_storage_total_1",
       family: "storage",
       title: "Lay In Supplies",
-      description: "Build a storage so workers can stash goods.",
+      description: "Build 1 storage after this goal appears.",
       metric: "storages",
+      mode: "delta",
       target: 1,
       reward: { xp: 12, money: 35 },
     },
@@ -54,8 +63,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "build_oven_total_1",
       family: "ovens",
       title: "Fire It Up",
-      description: "Build a clay oven for cooked food.",
+      description: "Build 1 clay oven after this goal appears.",
       metric: "ovens",
+      mode: "delta",
       target: 1,
       reward: { xp: 14, money: 50 },
     },
@@ -63,8 +73,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "build_fighter_total_1",
       family: "fighters",
       title: "Train A Defender",
-      description: "Have 1 fighter standing guard.",
+      description: "Train 1 fighter after this goal appears.",
       metric: "fighters",
+      mode: "delta",
       target: 1,
       reward: { xp: 16, money: 50 },
     },
@@ -72,18 +83,20 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "build_house_total_3",
       family: "housing",
       title: "Growing Village",
-      description: "Reach 3 houses in town.",
+      description: "Build 1 more house after this goal appears.",
       metric: "houses",
-      target: 3,
+      mode: "delta",
+      target: 1,
       reward: { xp: 24, money: 85 },
     },
     {
       uniqueKey: "build_fighter_total_3",
       family: "fighters",
       title: "Standing Army",
-      description: "Have 3 fighters ready at once.",
+      description: "Train 1 more fighter after this goal appears.",
       metric: "fighters",
-      target: 3,
+      mode: "delta",
+      target: 1,
       reward: { xp: 30, money: 90 },
     },
   ]),
@@ -112,8 +125,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "econ_harvest_total_8",
       family: "harvest",
       title: "First Yield",
-      description: "Harvest 8 crops in total.",
+      description: "Harvest 8 crops after this goal appears.",
       metric: "cropsHarvested",
+      mode: "delta",
       target: 8,
       reward: { xp: 10, seeds: 4 },
     },
@@ -131,9 +145,10 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "econ_harvest_total_24",
       family: "harvest",
       title: "Fieldwork",
-      description: "Harvest 24 crops in total.",
+      description: "Harvest 16 crops after this goal appears.",
       metric: "cropsHarvested",
-      target: 24,
+      mode: "delta",
+      target: 16,
       reward: { xp: 18, seeds: 6, money: 40 },
     },
   ]),
@@ -142,8 +157,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "combat_parcels_total_1",
       family: "expansion",
       title: "Open New Ground",
-      description: "Own 1 claimed parcel beyond town.",
+      description: "Claim 1 parcel after this goal appears.",
       metric: "parcelsClaimed",
+      mode: "delta",
       target: 1,
       reward: { xp: 20, money: 60 },
     },
@@ -151,8 +167,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "combat_raiders_total_5",
       family: "raiders",
       title: "Thin The Raiders",
-      description: "Defeat 5 raiders in total.",
+      description: "Defeat 5 raiders after this goal appears.",
       metric: "raidersKilled",
+      mode: "delta",
       target: 5,
       reward: { xp: 20, money: 70 },
     },
@@ -160,8 +177,9 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "combat_nights_total_1",
       family: "survival",
       title: "Hold Through Nightfall",
-      description: "Survive 1 full night.",
+      description: "Survive 1 full night after this goal appears.",
       metric: "nightsSurvived",
+      mode: "delta",
       target: 1,
       reward: { xp: 32, money: 90 },
     },
@@ -169,27 +187,30 @@ const FOUNDATION_TRACKS = Object.freeze({
       uniqueKey: "combat_parcels_total_3",
       family: "expansion",
       title: "Push The Frontier",
-      description: "Reach 3 claimed parcels.",
+      description: "Claim 2 parcels after this goal appears.",
       metric: "parcelsClaimed",
-      target: 3,
+      mode: "delta",
+      target: 2,
       reward: { xp: 26, money: 110 },
     },
     {
       uniqueKey: "combat_raiders_total_12",
       family: "raiders",
       title: "Break Their Charge",
-      description: "Defeat 12 raiders in total.",
+      description: "Defeat 7 raiders after this goal appears.",
       metric: "raidersKilled",
-      target: 12,
+      mode: "delta",
+      target: 7,
       reward: { xp: 28, money: 105 },
     },
     {
       uniqueKey: "combat_nights_total_2",
       family: "survival",
       title: "Two Nights Standing",
-      description: "Survive 2 full nights.",
+      description: "Survive 1 more full night after this goal appears.",
       metric: "nightsSurvived",
-      target: 2,
+      mode: "delta",
+      target: 1,
       reward: { xp: 36, money: 120 },
     },
   ]),
@@ -237,6 +258,41 @@ function nextMilestone(current, milestones = [], fallbackStep = 1) {
 
   const increments = Math.floor((now - last) / step) + 1;
   return last + (increments * step);
+}
+
+function getScheduledNormalRaiderTotal(normalNightCount = MAX_NORMAL_NIGHTS_SURVIVED_TARGET) {
+  const count = Math.max(0, asPositiveInt(normalNightCount, 0));
+  let total = 0;
+  for (let index = 1; index <= count; index++) {
+    total += Math.max(0, asPositiveInt(getNightHordeSettings(index)?.totalEnemies, 0));
+  }
+  return total;
+}
+
+function getScheduledNormalRaidersAfterNights(nightsSurvived = 0) {
+  const completed = Math.max(0, Math.min(MAX_NORMAL_NIGHTS_SURVIVED_TARGET, asPositiveInt(nightsSurvived, 0)));
+  let total = 0;
+  for (let index = completed + 1; index <= MAX_NORMAL_NIGHTS_SURVIVED_TARGET; index++) {
+    total += Math.max(0, asPositiveInt(getNightHordeSettings(index)?.totalEnemies, 0));
+  }
+  return total;
+}
+
+function cappedMilestones(milestones = [], cap = 0) {
+  const normalizedCap = Math.max(1, asPositiveInt(cap, 1));
+  const result = new Set();
+  for (const milestone of milestones) {
+    const target = Math.max(1, asPositiveInt(milestone, 0));
+    if (target <= normalizedCap) result.add(target);
+  }
+  result.add(normalizedCap);
+  return Array.from(result).sort((a, b) => a - b);
+}
+
+function nextCappedMilestone(current, milestones = [], fallbackStep = 1, cap = 0) {
+  const normalizedCap = Math.max(1, asPositiveInt(cap, 1));
+  const target = nextMilestone(current, cappedMilestones(milestones, normalizedCap), fallbackStep);
+  return target <= normalizedCap ? target : null;
 }
 
 function rewardText(reward = {}) {
@@ -353,8 +409,72 @@ export class AchievementSystem {
       this._syncFoundationProgramsFromCurrentState();
     }
 
+    this._normalizeRestoredActiveGoals();
     this._lastBoardSignature = "";
     this.update(true);
+  }
+
+  _normalizeRestoredActiveGoals() {
+    if (!Array.isArray(this.state.activeGoals)) {
+      this.state.activeGoals = [];
+      return;
+    }
+
+    const normalized = [];
+    const seenSlots = new Set();
+    const completed = Array.isArray(this.state.completedKeys) ? this.state.completedKeys : [];
+
+    for (const rawGoal of this.state.activeGoals) {
+      const goal = this._normalizeRestoredGoal(rawGoal);
+      if (!goal?.slot || seenSlots.has(goal.slot)) continue;
+      if (!goal.repeatable && completed.includes(goal.uniqueKey)) continue;
+
+      const safeGoal = goal.mode !== "delta" && this.getProgress(goal).done
+        ? this._convertGoalToActionableDelta(goal)
+        : goal;
+
+      normalized.push(safeGoal);
+      seenSlots.add(safeGoal.slot);
+    }
+
+    this.state.activeGoals = normalized;
+  }
+
+  _normalizeRestoredGoal(rawGoal) {
+    if (!rawGoal || typeof rawGoal !== "object") return null;
+    const slot = SLOT_ORDER.includes(rawGoal.slot) ? rawGoal.slot : null;
+    if (!slot) return null;
+
+    let instanceId = rawGoal.instanceId ? String(rawGoal.instanceId) : "";
+    if (!instanceId) {
+      const id = Math.max(1, asPositiveInt(this.state?.nextInstanceId, 1));
+      this.state.nextInstanceId = id + 1;
+      instanceId = `achv_${id}`;
+    }
+
+    const foundationConfig = rawGoal.mode === "delta"
+      ? null
+      : this._getFoundationConfigForKey(slot, rawGoal.uniqueKey);
+    const sourceConfig = foundationConfig || rawGoal;
+
+    return {
+      instanceId,
+      ...this._makeCandidate(slot, sourceConfig),
+    };
+  }
+
+  _getFoundationConfigForKey(slot, uniqueKey) {
+    const key = String(uniqueKey || "");
+    if (!key) return null;
+    const track = FOUNDATION_TRACKS[slot] || [];
+    const index = track.findIndex((entry) => entry?.uniqueKey === key);
+    if (index < 0) return null;
+    return {
+      ...track[index],
+      foundation: true,
+      foundationIndex: index,
+      weight: 99,
+    };
   }
 
   _syncFoundationProgramsFromCurrentState() {
@@ -574,7 +694,44 @@ export class AchievementSystem {
     return this.state.slotPrograms[slot];
   }
 
+  _getRemainingScheduledNormalRaiders() {
+    const nightsSurvived = this.getMetricValue("nightsSurvived");
+    const raidersKilled = this.getMetricValue("raidersKilled");
+    return Math.max(0, Math.min(
+      getScheduledNormalRaidersAfterNights(nightsSurvived),
+      DEMO_SCHEDULED_NORMAL_RAIDER_TOTAL - raidersKilled
+    ));
+  }
+
+  _isRaiderGoalDemoImpossible(goal) {
+    if (!goal || String(goal.metric || "") !== "raidersKilled") return false;
+    if (this.getProgress(goal).done) return false;
+
+    const mode = goal.mode === "delta" ? "delta" : "threshold";
+    const target = Math.max(1, asPositiveInt(goal.target, 1));
+    const baseline = Math.max(0, asPositiveInt(goal.baseline, 0));
+    const current = this.getMetricValue("raidersKilled");
+    const remainingScheduled = this._getRemainingScheduledNormalRaiders();
+
+    if (mode === "delta") {
+      const progress = Math.max(0, current - baseline);
+      const remainingNeeded = Math.max(0, target - progress);
+      return baseline + target > DEMO_SCHEDULED_NORMAL_RAIDER_TOTAL
+        || remainingNeeded > remainingScheduled;
+    }
+
+    const remainingNeeded = Math.max(0, target - current);
+    return target > DEMO_SCHEDULED_NORMAL_RAIDER_TOTAL
+      || remainingNeeded > remainingScheduled;
+  }
+
   _makeCandidate(slot, config = {}) {
+    const metric = String(config.metric || "houses");
+    const mode = config.mode === "delta" ? "delta" : "threshold";
+    const baselineSource = mode === "delta" && config.baseline == null
+      ? this.getMetricValue(metric)
+      : config.baseline;
+
     return {
       slot,
       uniqueKey: String(config.uniqueKey || `${slot}_${config.metric || "goal"}`),
@@ -582,10 +739,10 @@ export class AchievementSystem {
       title: String(config.title || "Town Goal"),
       description: String(config.description || ""),
       family: String(config.family || config.metric || slot),
-      metric: String(config.metric || "houses"),
-      mode: config.mode === "delta" ? "delta" : "threshold",
+      metric,
+      mode,
       target: Math.max(1, asPositiveInt(config.target, 1)),
-      baseline: Math.max(0, asPositiveInt(config.baseline, 0)),
+      baseline: Math.max(0, asPositiveInt(baselineSource, 0)),
       reward: clonePlain(config.reward, {}) || {},
       weight: clampWeight(config.weight, 1),
       foundation: !!config.foundation,
@@ -594,22 +751,127 @@ export class AchievementSystem {
   }
 
   _buildGoal(candidate) {
+    const preparedCandidate = this._prepareCandidateForActivation(candidate);
     const id = Math.max(1, asPositiveInt(this.state?.nextInstanceId, 1));
     this.state.nextInstanceId = id + 1;
     return {
       instanceId: `achv_${id}`,
-      ...clonePlain(candidate, candidate),
+      ...clonePlain(preparedCandidate, preparedCandidate),
     };
   }
 
   _isGoalUnavailable(candidate) {
     if (!candidate) return true;
+    if (this._isDeprecatedGoal(candidate)) return true;
     const activeGoals = Array.isArray(this.state?.activeGoals) ? this.state.activeGoals : [];
     if (activeGoals.some((goal) => goal?.uniqueKey === candidate.uniqueKey)) return true;
     if (!candidate.repeatable && Array.isArray(this.state?.completedKeys) && this.state.completedKeys.includes(candidate.uniqueKey)) {
       return true;
     }
     return false;
+  }
+
+  _getActionNoun(metric, count) {
+    const plural = count === 1 ? "" : "s";
+    switch (metric) {
+      case "houses":
+        return `house${plural}`;
+      case "storages":
+        return `storage${plural}`;
+      case "ovens":
+        return `clay oven${plural}`;
+      case "fighters":
+        return `fighter${plural}`;
+      case "players":
+        return `town member${plural}`;
+      case "parcelsClaimed":
+        return `parcel${plural}`;
+      case "nightsSurvived":
+        return `full night${plural}`;
+      case "raidersKilled":
+        return `raider${plural}`;
+      case "cropsHarvested":
+        return `crop${plural}`;
+      case "woodGathered":
+        return "wood";
+      case "stoneGathered":
+        return "stone";
+      case "seedsGathered":
+        return "crop seeds";
+      case "berriesGathered":
+        return "berry seeds";
+      case "food":
+        return "cooked food";
+      case "cleanWater":
+        return "clean water";
+      case "money":
+        return `dollar${plural}`;
+      case "permits":
+        return `permit${plural}`;
+      default:
+        return `point${plural}`;
+    }
+  }
+
+  _getActionVerb(metric) {
+    switch (metric) {
+      case "houses":
+      case "storages":
+      case "ovens":
+        return "Build";
+      case "fighters":
+        return "Train";
+      case "players":
+        return "Recruit";
+      case "parcelsClaimed":
+        return "Claim";
+      case "nightsSurvived":
+        return "Survive";
+      case "raidersKilled":
+        return "Defeat";
+      case "cropsHarvested":
+        return "Harvest";
+      case "woodGathered":
+        return "Gather";
+      case "stoneGathered":
+        return "Mine";
+      case "seedsGathered":
+      case "berriesGathered":
+        return "Gather";
+      case "food":
+      case "cleanWater":
+        return "Stockpile";
+      case "money":
+      case "permits":
+        return "Earn";
+      default:
+        return "Earn";
+    }
+  }
+
+  _buildActionDescription(goal, target) {
+    const metric = String(goal?.metric || "");
+    const count = Math.max(1, asPositiveInt(target, 1));
+    return `${this._getActionVerb(metric)} ${count} ${this._getActionNoun(metric, count)} after this goal appears.`;
+  }
+
+  _convertGoalToActionableDelta(goal) {
+    if (!goal) return goal;
+    const target = 1;
+    return {
+      ...clonePlain(goal, goal),
+      mode: "delta",
+      baseline: this.getMetricValue(goal.metric),
+      target,
+      description: this._buildActionDescription(goal, target),
+    };
+  }
+
+  _prepareCandidateForActivation(candidate) {
+    if (!candidate) return candidate;
+    if (candidate.mode === "delta") return candidate;
+    if (!this.getProgress(candidate).done) return candidate;
+    return this._convertGoalToActionableDelta(candidate);
   }
 
   _getFoundationGoalCandidate(slot) {
@@ -663,21 +925,23 @@ export class AchievementSystem {
       weight: 1.25,
     }));
 
-    const fighterTarget = nextMilestone(fighters, [4, 5, 6, 8, 10, 12], 2);
-    candidates.push(this._makeCandidate("build", {
-      uniqueKey: `build_fighter_total_${fighterTarget}`,
-      family: "fighters",
-      title: fighterTarget >= 8 ? "Hold The Line" : "Drill More Defenders",
-      description: `Have ${fighterTarget} fighters ready at once.`,
-      metric: "fighters",
-      target: fighterTarget,
-      reward: {
-        xp: 18 + (fighterTarget * 3),
-        money: 48 + (fighterTarget * 15),
-      },
-      repeatable: true,
-      weight: 1.05,
-    }));
+    const fighterTarget = nextCappedMilestone(fighters, [4, 5, 6, 8, 10, 12], 2, MAX_DEMO_FIGHTER_GOAL_TARGET);
+    if (fighterTarget) {
+      candidates.push(this._makeCandidate("build", {
+        uniqueKey: `build_fighter_total_${fighterTarget}`,
+        family: "fighters",
+        title: fighterTarget >= 8 ? "Hold The Line" : "Drill More Defenders",
+        description: `Have ${fighterTarget} fighters ready at once.`,
+        metric: "fighters",
+        target: fighterTarget,
+        reward: {
+          xp: 18 + (fighterTarget * 3),
+          money: 48 + (fighterTarget * 15),
+        },
+        repeatable: true,
+        weight: 1.05,
+      }));
+    }
 
     if (storages >= 1) {
       const storageTarget = MAX_STORAGE_GOAL_TARGET;
@@ -717,23 +981,25 @@ export class AchievementSystem {
       }));
     }
 
-    const playerTarget = nextMilestone(players, [5, 6, 8, 10, 12, 14], 2);
-    candidates.push(this._makeCandidate("build", {
-      uniqueKey: `build_player_total_${playerTarget}`,
-      family: "population",
-      title: "Growing Workforce",
-      description: `Reach ${playerTarget} active town members.`,
-      metric: "players",
-      target: playerTarget,
-      reward: {
-        xp: 18 + (playerTarget * 2),
-        money: 35 + (playerTarget * 10),
-        food: 3,
-        cleanWater: 3,
-      },
-      repeatable: true,
-      weight: 0.94,
-    }));
+    const playerTarget = nextCappedMilestone(players, [5, 6, 8, 10, 12, 14], 2, MAX_DEMO_POPULATION_GOAL_TARGET);
+    if (playerTarget) {
+      candidates.push(this._makeCandidate("build", {
+        uniqueKey: `build_player_total_${playerTarget}`,
+        family: "population",
+        title: "Growing Workforce",
+        description: `Reach ${playerTarget} active town members.`,
+        metric: "players",
+        target: playerTarget,
+        reward: {
+          xp: 18 + (playerTarget * 2),
+          money: 35 + (playerTarget * 10),
+          food: 3,
+          cleanWater: 3,
+        },
+        repeatable: true,
+        weight: 0.94,
+      }));
+    }
 
     const repairTarget = nights >= 4 ? 16 : 10;
     candidates.push(this._makeCandidate("build", {
@@ -871,56 +1137,62 @@ export class AchievementSystem {
       }));
     }
 
-    const foodTarget = nextMilestone(food, [18, 24, 30, 40, 52], 10);
-    candidates.push(this._makeCandidate("economy", {
-      uniqueKey: `econ_food_${foodTarget}`,
-      family: "stockpile_food",
-      title: "Meal Prep",
-      description: `Hold ${foodTarget} cooked food.`,
-      metric: "food",
-      target: foodTarget,
-      reward: {
-        xp: 14 + Math.floor(foodTarget / 2),
-        money: 18 + foodTarget,
-        cleanWater: 2,
-      },
-      repeatable: true,
-      weight: 0.88,
-    }));
+    const foodTarget = nextCappedMilestone(food, [18, 24, 30, 40, 52], 10, MAX_DEMO_STOCKPILE_GOAL_TARGET);
+    if (foodTarget) {
+      candidates.push(this._makeCandidate("economy", {
+        uniqueKey: `econ_food_${foodTarget}`,
+        family: "stockpile_food",
+        title: "Meal Prep",
+        description: `Hold ${foodTarget} cooked food.`,
+        metric: "food",
+        target: foodTarget,
+        reward: {
+          xp: 14 + Math.floor(foodTarget / 2),
+          money: 18 + foodTarget,
+          cleanWater: 2,
+        },
+        repeatable: true,
+        weight: 0.88,
+      }));
+    }
 
-    const waterTarget = nextMilestone(cleanWater, [18, 24, 30, 40, 52], 10);
-    candidates.push(this._makeCandidate("economy", {
-      uniqueKey: `econ_water_${waterTarget}`,
-      family: "stockpile_water",
-      title: "Fill The Casks",
-      description: `Hold ${waterTarget} clean water.`,
-      metric: "cleanWater",
-      target: waterTarget,
-      reward: {
-        xp: 14 + Math.floor(waterTarget / 2),
-        money: 18 + waterTarget,
-        food: 2,
-      },
-      repeatable: true,
-      weight: 0.88,
-    }));
+    const waterTarget = nextCappedMilestone(cleanWater, [18, 24, 30, 40, 52], 10, MAX_DEMO_STOCKPILE_GOAL_TARGET);
+    if (waterTarget) {
+      candidates.push(this._makeCandidate("economy", {
+        uniqueKey: `econ_water_${waterTarget}`,
+        family: "stockpile_water",
+        title: "Fill The Casks",
+        description: `Hold ${waterTarget} clean water.`,
+        metric: "cleanWater",
+        target: waterTarget,
+        reward: {
+          xp: 14 + Math.floor(waterTarget / 2),
+          money: 18 + waterTarget,
+          food: 2,
+        },
+        repeatable: true,
+        weight: 0.88,
+      }));
+    }
 
-    const cashTarget = nextMilestone(money, [500, 700, 1000, 1400, 1800], 400);
-    candidates.push(this._makeCandidate("economy", {
-      uniqueKey: `econ_cash_${cashTarget}`,
-      family: "cash",
-      title: "Cash Buffer",
-      description: `Hold $${cashTarget} at once.`,
-      metric: "money",
-      target: cashTarget,
-      reward: {
-        xp: 18 + Math.floor(cashTarget / 80),
-        permits: cashTarget >= 1000 ? 1 : 0,
-        money: 35 + Math.floor(cashTarget / 10),
-      },
-      repeatable: true,
-      weight: 0.54,
-    }));
+    const cashTarget = nextCappedMilestone(money, [500, 700, 1000, 1400, 1800], 400, MAX_DEMO_CASH_GOAL_TARGET);
+    if (cashTarget) {
+      candidates.push(this._makeCandidate("economy", {
+        uniqueKey: `econ_cash_${cashTarget}`,
+        family: "cash",
+        title: "Cash Buffer",
+        description: `Hold $${cashTarget} at once.`,
+        metric: "money",
+        target: cashTarget,
+        reward: {
+          xp: 18 + Math.floor(cashTarget / 80),
+          permits: cashTarget >= 1000 ? 1 : 0,
+          money: 35 + Math.floor(cashTarget / 10),
+        },
+        repeatable: true,
+        weight: 0.54,
+      }));
+    }
 
     if (parcelsClaimed >= 1 || nights >= 1) {
       const marketTarget = nights >= 4 ? 2 : 1;
@@ -972,42 +1244,49 @@ export class AchievementSystem {
       return [makeShockerCandidate()];
     }
 
-    const raiderDeltaTarget = nightsSurvived >= 3 ? 10 : 6;
-    candidates.push(this._makeCandidate("combat", {
-      uniqueKey: `combat_raiders_${raidersKilled}_${raiderDeltaTarget}`,
-      family: "raiders",
-      title: raiderDeltaTarget >= 10 ? "Break The Wave" : "Keep The Coast Clear",
-      description: `Defeat ${raiderDeltaTarget} raiders after this goal appears.`,
-      metric: "raidersKilled",
-      mode: "delta",
-      baseline: raidersKilled,
-      target: raiderDeltaTarget,
-      reward: {
-        xp: 18 + (raiderDeltaTarget * 2),
-        money: 40 + (raiderDeltaTarget * 5),
-      },
-      repeatable: true,
-      weight: 1.18,
-    }));
+    const desiredRaiderDeltaTarget = nightsSurvived >= 3 ? 10 : 6;
+    const remainingScheduledRaiders = this._getRemainingScheduledNormalRaiders();
+    const raiderDeltaTarget = Math.min(desiredRaiderDeltaTarget, remainingScheduledRaiders);
+    if (raiderDeltaTarget > 0) {
+      candidates.push(this._makeCandidate("combat", {
+        uniqueKey: `combat_raiders_${raidersKilled}_${raiderDeltaTarget}`,
+        family: "raiders",
+        title: raiderDeltaTarget >= 10 ? "Break The Wave" : "Keep The Coast Clear",
+        description: `Defeat ${raiderDeltaTarget} raiders after this goal appears.`,
+        metric: "raidersKilled",
+        mode: "delta",
+        baseline: raidersKilled,
+        target: raiderDeltaTarget,
+        reward: {
+          xp: 18 + (raiderDeltaTarget * 2),
+          money: 40 + (raiderDeltaTarget * 5),
+        },
+        repeatable: true,
+        weight: 1.18,
+      }));
+    }
 
-    const parcelDeltaTarget = parcelsClaimed >= 5 ? 2 : 1;
-    candidates.push(this._makeCandidate("combat", {
-      uniqueKey: `combat_parcels_${parcelsClaimed}_${parcelDeltaTarget}`,
-      family: "expansion",
-      title: parcelDeltaTarget > 1 ? "Push The Border" : "Claim Another Parcel",
-      description: `Claim ${parcelDeltaTarget} parcel${parcelDeltaTarget === 1 ? "" : "s"} after this goal appears.`,
-      metric: "parcelsClaimed",
-      mode: "delta",
-      baseline: parcelsClaimed,
-      target: parcelDeltaTarget,
-      reward: {
-        xp: 18 + (parcelDeltaTarget * 12),
-        money: 45 + (parcelDeltaTarget * 38),
-        permits: parcelDeltaTarget > 1 ? 1 : 0,
-      },
-      repeatable: true,
-      weight: 1.04,
-    }));
+    const remainingDemoParcels = Math.max(0, MAX_DEMO_PARCEL_GOAL_TARGET - parcelsClaimed);
+    const parcelDeltaTarget = Math.min(parcelsClaimed >= 5 ? 2 : 1, remainingDemoParcels);
+    if (parcelDeltaTarget > 0) {
+      candidates.push(this._makeCandidate("combat", {
+        uniqueKey: `combat_parcels_${parcelsClaimed}_${parcelDeltaTarget}`,
+        family: "expansion",
+        title: parcelDeltaTarget > 1 ? "Push The Border" : "Claim Another Parcel",
+        description: `Claim ${parcelDeltaTarget} parcel${parcelDeltaTarget === 1 ? "" : "s"} after this goal appears.`,
+        metric: "parcelsClaimed",
+        mode: "delta",
+        baseline: parcelsClaimed,
+        target: parcelDeltaTarget,
+        reward: {
+          xp: 18 + (parcelDeltaTarget * 12),
+          money: 45 + (parcelDeltaTarget * 38),
+          permits: parcelDeltaTarget > 1 ? 1 : 0,
+        },
+        repeatable: true,
+        weight: 1.04,
+      }));
+    }
 
     const nightDeltaTarget = 1;
     candidates.push(this._makeCandidate("combat", {
@@ -1027,38 +1306,47 @@ export class AchievementSystem {
       weight: 0.98,
     }));
 
-    const parcelTotalTarget = nextMilestone(parcelsClaimed, [4, 6, 8, 10, 12], 2);
-    candidates.push(this._makeCandidate("combat", {
-      uniqueKey: `combat_parcels_total_${parcelTotalTarget}`,
-      family: "expansion",
-      title: "Frontier Reach",
-      description: `Reach ${parcelTotalTarget} total claimed parcels.`,
-      metric: "parcelsClaimed",
-      target: parcelTotalTarget,
-      reward: {
-        xp: 20 + (parcelTotalTarget * 6),
-        money: 50 + (parcelTotalTarget * 22),
-        permits: parcelTotalTarget >= 8 ? 1 : 0,
-      },
-      repeatable: true,
-      weight: 0.82,
-    }));
+    const parcelTotalTarget = nextCappedMilestone(parcelsClaimed, [4, 6, 8, 10, 12], 2, MAX_DEMO_PARCEL_GOAL_TARGET);
+    if (parcelTotalTarget) {
+      candidates.push(this._makeCandidate("combat", {
+        uniqueKey: `combat_parcels_total_${parcelTotalTarget}`,
+        family: "expansion",
+        title: "Frontier Reach",
+        description: `Reach ${parcelTotalTarget} total claimed parcels.`,
+        metric: "parcelsClaimed",
+        target: parcelTotalTarget,
+        reward: {
+          xp: 20 + (parcelTotalTarget * 6),
+          money: 50 + (parcelTotalTarget * 22),
+          permits: parcelTotalTarget >= 8 ? 1 : 0,
+        },
+        repeatable: true,
+        weight: 0.82,
+      }));
+    }
 
-    const raiderTotalTarget = nextMilestone(raidersKilled, [18, 30, 45, 60], 15);
-    candidates.push(this._makeCandidate("combat", {
-      uniqueKey: `combat_raiders_total_${raiderTotalTarget}`,
-      family: "raiders",
-      title: "Count The Fallen",
-      description: `Reach ${raiderTotalTarget} total raiders defeated.`,
-      metric: "raidersKilled",
-      target: raiderTotalTarget,
-      reward: {
-        xp: 22 + Math.floor(raiderTotalTarget * 1.2),
-        money: 50 + (raiderTotalTarget * 3),
-      },
-      repeatable: true,
-      weight: 0.8,
-    }));
+    const raiderTotalTarget = nextCappedMilestone(
+      raidersKilled,
+      [18, 30, 45, 60],
+      15,
+      DEMO_SCHEDULED_NORMAL_RAIDER_TOTAL
+    );
+    if (raiderTotalTarget) {
+      candidates.push(this._makeCandidate("combat", {
+        uniqueKey: `combat_raiders_total_${raiderTotalTarget}`,
+        family: "raiders",
+        title: "Count The Fallen",
+        description: `Reach ${raiderTotalTarget} total raiders defeated.`,
+        metric: "raidersKilled",
+        target: raiderTotalTarget,
+        reward: {
+          xp: 22 + Math.floor(raiderTotalTarget * 1.2),
+          money: 50 + (raiderTotalTarget * 3),
+        },
+        repeatable: true,
+        weight: 0.8,
+      }));
+    }
 
     const nightTotalTarget = nextMilestone(nightsSurvived, [3, 5], 2);
     if (nightTotalTarget <= MAX_NORMAL_NIGHTS_SURVIVED_TARGET) {
@@ -1185,6 +1473,16 @@ export class AchievementSystem {
     const mode = goal?.mode === "delta" ? "delta" : "threshold";
     const target = Math.max(0, asPositiveInt(goal?.target, 0));
     const baseline = Math.max(0, asPositiveInt(goal?.baseline, 0));
+    const isDone = () => this.getProgress(goal).done;
+    const shouldPreferShockerGoal =
+      goal?.slot === "combat" &&
+      key !== "combat_shocker_total_1" &&
+      (
+        this.getMetricValue("nightsSurvived") >= MAX_NORMAL_NIGHTS_SURVIVED_TARGET ||
+        this.getMetricValue("shockersDefeated") > 0
+      );
+
+    if (shouldPreferShockerGoal) return !isDone();
 
     if (
       family === "stockpile_wood" ||
@@ -1210,6 +1508,28 @@ export class AchievementSystem {
     if (metric === "ovens") {
       if (target > MAX_OVEN_GOAL_TARGET) return true;
       if (target === MAX_OVEN_GOAL_TARGET && goal?.repeatable) return true;
+    }
+    if (metric === "fighters" && mode !== "delta" && target > MAX_DEMO_FIGHTER_GOAL_TARGET) {
+      return !isDone();
+    }
+    if (metric === "players" && mode !== "delta" && target > MAX_DEMO_POPULATION_GOAL_TARGET) {
+      return !isDone();
+    }
+    if ((metric === "food" || metric === "cleanWater") && mode !== "delta" && target > MAX_DEMO_STOCKPILE_GOAL_TARGET) {
+      return !isDone();
+    }
+    if (metric === "money" && mode !== "delta" && target > MAX_DEMO_CASH_GOAL_TARGET) {
+      return !isDone();
+    }
+
+    if (metric === "parcelsClaimed") {
+      if (isDone()) return false;
+      if (mode === "delta") return baseline + target > MAX_DEMO_PARCEL_GOAL_TARGET;
+      return target > MAX_DEMO_PARCEL_GOAL_TARGET;
+    }
+
+    if (metric === "raidersKilled") {
+      return this._isRaiderGoalDemoImpossible(goal);
     }
 
     if (metric === "nightsSurvived") {
@@ -1246,6 +1566,29 @@ export class AchievementSystem {
     return true;
   }
 
+  _shouldDeferCompletions() {
+    const scene = this.scene;
+    if (!scene) return false;
+
+    if (
+      scene._startupCameraLocked ||
+      scene._menuModeActive ||
+      scene.isMainMenuPreview ||
+      scene._pendingMenuPhase ||
+      scene._continueCameraLockActive
+    ) {
+      return true;
+    }
+
+    const uiScene = scene.uiScene;
+    if (!uiScene) return false;
+    if (uiScene._sceneShuttingDown) return true;
+    if (!uiScene._gameplayUiReady) return true;
+    if (uiScene._achievementBoardAwaitingDetailedReveal) return true;
+    if (uiScene.achievementBoard?._hiddenUntilDetailed) return true;
+    return false;
+  }
+
   update(force = false) {
     if (Array.isArray(this.state.activeGoals)) {
       const before = this.state.activeGoals.length;
@@ -1254,6 +1597,10 @@ export class AchievementSystem {
     }
 
     let changed = this._ensureActiveSlots();
+    if (this._shouldDeferCompletions()) {
+      return this._emitChanged(force || changed) || changed;
+    }
+
     let safety = 0;
 
     while (safety < 18) {

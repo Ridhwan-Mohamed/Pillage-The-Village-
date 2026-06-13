@@ -25,52 +25,28 @@ export class SiegePlanner {
     }
 
     const key = (a, b) => `${Math.min(a, b)}|${Math.max(a, b)}`;
-    const startTile = this._worldToTile(startWorldX, startWorldY);
 
-    const worldCenterOfTile = (tx, ty) => ({
-      x: tx * this.squareSize + this.squareSize / 2,
-      y: ty * this.squareSize + this.squareSize / 2,
-    });
+    const startPoint = this._resolveWalkableStartPoint(startWorldX, startWorldY);
+    if (!startPoint) return null;
 
-    // Targets are usually perimeter tiles; if a target tile is NOT walkable (wall),
-    // infer a region by checking its walkable neighbors.
-    const regionForTile = (tx, ty) => {
-      const H = this.enemyNavGrid.length;
-      const W = this.enemyNavGrid[0].length;
-      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return -1;
-
-      if (this.enemyNavGrid[ty][tx] === 1) {
-        const w = worldCenterOfTile(tx, ty);
-        return rs.getRegionIdForWorldPoint(w.x, w.y);
-      }
-
-      // Not walkable => look for any adjacent walkable and use its region
-      const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-      for (const [dx, dy] of dirs) {
-        const nx = tx + dx, ny = ty + dy;
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-        if (this.enemyNavGrid[ny][nx] !== 1) continue;
-        const w = worldCenterOfTile(nx, ny);
-        const rid = rs.getRegionIdForWorldPoint(w.x, w.y);
-        if (rid !== -1) return rid;
-      }
-
-      return -1;
-    };
-
-    const startRid = rs.getRegionIdForWorldPoint(startWorldX, startWorldY);
+    const startTile = this._worldToTile(startPoint.x, startPoint.y);
+    const startRid = this._strictRegionIdForWorldPoint(startPoint.x, startPoint.y);
     if (startRid === -1) return null;
 
     // Collect unique target regions
     const targetRegions = new Set();
     for (const t of targets) {
-      const rid = regionForTile(t.x, t.y);
-      if (rid !== -1) targetRegions.add(rid);
+      for (const rid of this._regionsForTargetTile(t.x, t.y)) {
+        targetRegions.add(rid);
+      }
     }
     if (targetRegions.size === 0) return null;
 
-    // If already in a target region: no breach needed
-    if (targetRegions.has(startRid)) return [];
+    // If blocked perimeter sampling also saw the outside/start region, keep looking
+    // for a non-start goal region instead of declaring the target reachable.
+    const goalRegions = new Set(targetRegions);
+    if (goalRegions.size > 1) goalRegions.delete(startRid);
+    if (goalRegions.size === 0) return [];
 
     // ---- Dijkstra over weighted breach edges ----
     const open = [startRid];
@@ -86,7 +62,7 @@ export class SiegePlanner {
       if (closed.has(r)) continue;
       closed.add(r);
 
-      if (targetRegions.has(r)) { goal = r; break; }
+      if (goalRegions.has(r)) { goal = r; break; }
 
       const neigh = rs.regionGraph.get(r);
       if (!neigh) continue;
@@ -159,6 +135,80 @@ export class SiegePlanner {
       x: Math.floor(wx / this.squareSize),
       y: Math.floor(wy / this.squareSize),
     };
+  }
+
+  _worldCenterOfTile(tx, ty) {
+    return {
+      x: tx * this.squareSize + this.squareSize / 2,
+      y: ty * this.squareSize + this.squareSize / 2,
+    };
+  }
+
+  _meshContainsWorldPoint(wx, wy) {
+    const navMesh = this.regionSystem?.navMesh;
+    if (!navMesh?.isPointInMesh) return true;
+    return !!navMesh.isPointInMesh({ x: wx, y: wy });
+  }
+
+  _strictRegionIdForWorldPoint(wx, wy) {
+    if (!this._meshContainsWorldPoint(wx, wy)) return -1;
+    return this.regionSystem?.getRegionIdForWorldPoint?.(wx, wy) ?? -1;
+  }
+
+  _regionIdForWalkableTile(tx, ty) {
+    if (!this._inBounds(tx, ty) || this.enemyNavGrid?.[ty]?.[tx] !== 1) return -1;
+    const w = this._worldCenterOfTile(tx, ty);
+    return this._strictRegionIdForWorldPoint(w.x, w.y);
+  }
+
+  _resolveWalkableStartPoint(wx, wy) {
+    if (!Number.isFinite(wx) || !Number.isFinite(wy)) return null;
+    const tile = this._worldToTile(wx, wy);
+    const center = (tx, ty) => this._worldCenterOfTile(tx, ty);
+
+    if (this._regionIdForWalkableTile(tile.x, tile.y) !== -1) {
+      return center(tile.x, tile.y);
+    }
+
+    let best = null;
+    let bestDist = Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = tile.x + dx;
+        const ny = tile.y + dy;
+        if (this._regionIdForWalkableTile(nx, ny) === -1) continue;
+        const candidate = center(nx, ny);
+        const dist = Math.hypot(wx - candidate.x, wy - candidate.y);
+        if (dist < bestDist) {
+          best = candidate;
+          bestDist = dist;
+        }
+      }
+    }
+
+    return bestDist <= this.squareSize * 0.8 ? best : null;
+  }
+
+  // Targets are usually perimeter tiles. Walkable target tiles map directly.
+  // Blocked tiles may be walls, so include every adjacent walkable region and
+  // let the planner ignore the start-side region when a deeper goal exists.
+  _regionsForTargetTile(tx, ty) {
+    const regions = new Set();
+    if (!this._inBounds(tx, ty)) return regions;
+
+    const directRid = this._regionIdForWalkableTile(tx, ty);
+    if (directRid !== -1) {
+      regions.add(directRid);
+      return regions;
+    }
+
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const rid = this._regionIdForWalkableTile(tx + dx, ty + dy);
+      if (rid !== -1) regions.add(rid);
+    }
+
+    return regions;
   }
 
   _orientedTilesForOption(option, fromRegion, toRegion) {

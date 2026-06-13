@@ -2713,9 +2713,8 @@ export class GameUIScene extends Phaser.Scene {
       const world = this.worldScene;
       const mixer = world?.zoomMixer;
       if (!mixer) return;
-      if (mixer.zoomOutLocked || world?.stageCompleteLock) return;
-      mixer.targetZoom = targetZoom;
-      mixer.smoothCenterZoomTo(targetZoom);
+      if (mixer.zoomOutLocked || world?.stageCompleteLock || mixer.isCenterZoomTransitionActive?.()) return;
+      mixer.requestCenterZoomTo?.(targetZoom) ?? mixer.smoothCenterZoomTo(targetZoom);
     };
 
     const cycleSpeed = () => {
@@ -2732,14 +2731,18 @@ export class GameUIScene extends Phaser.Scene {
       const mixer = this.worldScene?.zoomMixer;
       if (!mixer) return;
       const isOverview = mixer.mode === "overview";
-      triggerZoom(isOverview ? (mixer.detailedZoom ?? 1) : (mixer.overviewZoom ?? 0.3));
+      triggerZoom(isOverview ? (mixer.detailedZoom ?? 1) : (mixer.overviewZoom ?? 0.36));
     });
     this._bindTopHudHover(speedBtn.bg, "Speed");
     this._bindTopHudHover(zoomBtn.bg, "Zoom");
 
     root.updateState = () => {
       const world = this.worldScene;
-      const zoomDisabled = !!(world?.zoomMixer?.zoomOutLocked || world?.stageCompleteLock);
+      const zoomDisabled = !!(
+        world?.zoomMixer?.zoomOutLocked ||
+        world?.stageCompleteLock ||
+        world?.zoomMixer?.isCenterZoomTransitionActive?.()
+      );
       const speedDisabled = !!(!world || world.stageCompleteLock);
       const selectedSpeed = world?.getSimulationSpeed?.() ?? 1;
 

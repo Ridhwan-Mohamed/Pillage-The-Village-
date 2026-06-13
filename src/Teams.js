@@ -53,6 +53,9 @@ export class Teams {
       normalized.waterRemainingCount = Math.max(0, Number(normalized.waterRemainingCount || 0) || 0);
       normalized.waterDeliveredCount = Math.max(0, Number(normalized.waterDeliveredCount || 0) || 0);
       normalized.waterCommittedCount = Math.max(0, Number(normalized.waterCommittedCount || 0) || 0);
+      if (normalized.waterCommittedCount > normalized.waterRemainingCount) {
+        normalized.waterRemainingCount = normalized.waterCommittedCount;
+      }
       normalized.waterOrderId = normalized.waterOrderId ?? null;
 
       normalized.gatherEnabled = !!normalized.gatherEnabled;
@@ -148,6 +151,10 @@ export class Teams {
       if (!automation || !orderId || automation.waterOrderId !== orderId) return false;
       automation.waterEnabled = true;
       automation.waterCommittedCount = Math.max(0, Number(automation.waterCommittedCount || 0)) + Math.max(0, Number(amount || 0) || 0);
+      automation.waterRemainingCount = Math.max(
+        Math.max(0, Number(automation.waterRemainingCount || 0)),
+        automation.waterCommittedCount
+      );
       this._refreshFunctionTabUi();
       return true;
     }
@@ -156,6 +163,7 @@ export class Teams {
       const automation = this.ensureTownAutomation(teamNumber);
       if (!automation || !orderId || automation.waterOrderId !== orderId) return false;
       automation.waterCommittedCount = Math.max(0, Number(automation.waterCommittedCount || 0) - Math.max(0, Number(amount || 0) || 0));
+      automation.waterRemainingCount = Math.max(0, Number(automation.waterRemainingCount || 0));
       if (automation.waterRemainingCount <= 0 && automation.waterCommittedCount <= 0) {
         this._finishTownWaterBatch(automation);
       }

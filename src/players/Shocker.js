@@ -195,6 +195,10 @@ export class Shocker {
         return Raider._dropPlayerChase(troop);
     }
 
+    static _releaseSiegeTasks(troop) {
+        return Raider._releaseSiegeTasks?.(troop);
+    }
+
     static _clearCombatTaskClaim(troop) {
         if (troop?.taskMeta?.state !== CONTROL_STATES.TRACK_TARGET) return;
         if (typeof troop.task?.assigned === "number" && troop.task.assigned > 0) {
@@ -627,7 +631,10 @@ export class Shocker {
         Map.enemyRegionSystem?.ensureUpToDate?.();
         const targets = SiegePlanner.buildPerimeterTargets(fp.x, fp.y, fp.w, fp.h, gridW, gridH);
         const planner = Raider._ensureSiegePlanner?.();
-        const breachTiles = planner?.planBreach?.(troop.x, troop.y, targets);
+        let breachTiles = planner?.planBreach?.(troop.x, troop.y, targets);
+        if (!breachTiles?.length) {
+            breachTiles = Raider._fallbackAdjacentBreachTiles?.(troop) || [];
+        }
         if (!breachTiles?.length) return [];
 
         const now = troop.scene?.getSimulationNow?.() ?? troop.scene?.simNowMs ?? troop.scene?.time?.now ?? Date.now();

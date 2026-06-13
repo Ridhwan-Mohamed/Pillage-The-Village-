@@ -29,6 +29,8 @@ import building_collapse from 'url:../assets/audio/building-collapse.ogg';
 import door_open from 'url:../assets/audio/door-opening.ogg';
 import door_close from 'url:../assets/audio/door-closing.ogg';
 import end_stage_explosions from 'url:../assets/audio/end_stage_explosions.ogg';
+import bomber_sizzle from 'url:../assets/audio/sizzle.ogg';
+import bomber_explosion from 'url:../assets/audio/explosion.ogg';
 import button_hover from 'url:../assets/audio/button_hover.ogg';
 import button_click_bubble from 'url:../assets/audio/button_click_bubble.ogg';
 import bottom_bar_click from 'url:../assets/audio/bottomBar_click.ogg';
@@ -102,6 +104,8 @@ export class AudioManager {
     "sfx_rock_break",
     "sfx_building_complete",
     "sfx_building_damage",
+    "sfx_bomber_sizzle",
+    "sfx_bomber_explosion",
     "sfx_door_open",
     "sfx_door_close",
     "sfx_flee_scream_1",
@@ -193,6 +197,8 @@ export class AudioManager {
     scene.load.audio("sfx_door_open",   door_open);
     scene.load.audio("sfx_door_close",  door_close);
     scene.load.audio("sfx_end_stage_explosions", end_stage_explosions);
+    scene.load.audio("sfx_bomber_sizzle", bomber_sizzle);
+    scene.load.audio("sfx_bomber_explosion", bomber_explosion);
     scene.load.audio("amb_menu_ocean", main_menu_ambience);
     scene.load.audio("sfx_ui_hover", button_hover);
     scene.load.audio("sfx_ui_click_menu", button_click_bubble);
@@ -560,6 +566,48 @@ export class AudioManager {
 
     static playWorldSound(soundKey, opts = {}) {
         this.playSound(soundKey, { ...opts, world: true });
+    }
+
+    static playWorldSoundInstance(soundKey, opts = {}) {
+        if (!this.scene) return null;
+        if (this._worldAudioPaused) return null;
+        if (!this.scene.cache.audio.exists(soundKey)) return null;
+
+        const sound = this.scene.sound.add(soundKey, {
+        volume: opts.volume ?? 0.40,
+        rate: opts.rate ?? (0.95 + Math.random() * 0.1),
+        });
+
+        let cleaned = false;
+        const cleanup = () => {
+            if (cleaned) return;
+            cleaned = true;
+            try { sound.off?.("complete", cleanup); } catch {}
+            try { sound.off?.("stop", cleanup); } catch {}
+            try { sound.destroy?.(); } catch {}
+        };
+        sound._phxManagedCleanup = cleanup;
+        sound.once?.("complete", cleanup);
+        sound.once?.("stop", cleanup);
+
+        try {
+            const played = sound.play();
+            if (played === false) {
+                cleanup();
+                return null;
+            }
+        } catch {
+            cleanup();
+            return null;
+        }
+
+        return sound;
+    }
+
+    static stopManagedSound(sound) {
+        if (!sound) return;
+        try { sound.stop?.(); } catch {}
+        try { sound._phxManagedCleanup?.(); } catch {}
     }
 
     static playOptionalSound(soundKey, fallbackKey = null, opts = {}) {

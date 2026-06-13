@@ -1,39 +1,31 @@
-# V1 TEST PHASE (1 OF 3)
+# V1 TEST PHASE (2 OF 3)
 
 ### Test
-- [x] beat the shocker and see if you get unlocks on restart
-- [x] test tutorial on 3 deck cards starting amounts
+- [x] test difficulty
+- [x] test bombers
 
-### art fixes
-- [x] dirt corner water pieces
-
-### edits
-- [x] town layout tab on left in town layout should say,Click on a building to move it, once you feel settled, begin the game (or sumn a bit better), can remove rest of texts below first paragraph and shrink height of bar a bit
-- [x] when farmer tells you to plot resources, state its best to place it nearer to your storage building (the closer the better)
-- [x] The field contracts supply seeds for growing more food and berries for quick stamina and health boost is a better thing to type
-- [x] when builder asks you to build stuff, emntion to try and place it near the town in some way
-- [x] town towers still not flashing in tutorial, probably cause game is paused during that time idk. make it flash though when farmer is tlaking about it for those 2 or 3 speech texts (forgot how many)
-
-### move amount
-- [x] assign move amounts to decks in town layout
+### art and audio
+- [x] Permit approved big art 
+- [x] Permit approved small art
+- [x] add spining circle reload animation above gunslingers/hunters when he is reloading
+- [x] sizzle sound for bomber
+- [x] explosion audio for bomber
 
 ### bugs to fix
-- [x] turrets stop raiders
-- [x] hunter sometimes shoots at target but doesnt hsow bullet, need some sort of hit effect
-- [x] overview mode building
-- [x] overview mode sending foragers
-- [x] this is still broken, on lvl up reward popup when i was in overview mode, it swithced overview mdoe textures and style to detailed mode, idk why. this shouldnt be hard, its jsut a popup and should have no control on what the map mode/is dispalyed in world scene
-- [x] not deleting run on completion of demo, can contineu old save on day 7
-- [x] once done demo, store items arent unlocked
-- [x] text mention store items are unlocked on demo completion is written bad, say it more clear
-- [x] why is the shocker not breaching wall, i had an auto wall and it didnt breach it at all, it landed on shore beside the wall and did nothing till troops attacked it then started attackign wall, maybe only cause proximity
-- [x] add a crown emoji in a similar bubble style on demo completion (beat the shocker) opposite to my itch icon (top right) in main menu and on hover say you beat the demo!
-- [x] MILITA CONTRACT NOT ENDING DESPITE IT BEING OUT OF BULLETS, should auto end in that case
-- [x] SHOCKER DAMAGE LESSENS BASED ON NUMBER OF TENDRILS or tragets its zapping, MORE POWERFUL IF CONCENTRATED, LESS IF SPREAD
-- [x] town name text box is hard to read, just make it white text whith a black background, no glow nonsense
-- [x] lights not centered on parcel goods, seems to favour top left as the light position rather than center of the parcel good, also seem to not acount for size of good. perhaps same issue for building/farm lights you tell me, if so fix hat aswell
-- [x] second time a parcel loaded with no navmesh, help me figure out why. seems to be no errors in console, parcel went through aniamtion and drew the parcel but it has no navmesh data and troops can path to it
-- [x] why arent bombers in the demo (first 7 days, should show up in nights 5 and 6 (1 then 2))
+- why is the shocker/raiders not breaching wall, i had an auto wall and it didnt breach it at all, it landed on shore beside the wall and did nothing. I think this might be because of the nature of the uniquetiles code in breach tiles planbreach()? 
+- enemies post fight with troops are not continuing the wall breach if they need to breach to reach their task idk why, think it might be because of the previous hint with unique tiles. how exactly do walls breach work, how is it delegated?
+- [x] some achievements are auto completing on start, seems meaningless, feel free to make them easy first achievments but dont make them complete freebies. they also pop in before mini logo leaves causing them to be covered up by the mini logo.
+- [x] can turrets shoot through player walls? should be able to
+- [x] double clicking z mid zoom seems to cause lag and bug out. when in zoom tween/process/ neglect any new z clicks
+- [x] some players dont have light bubbles? not sure why? is it cause how they were bought? like some were bought and others were spawned in?
+- [x] your not editing the top text 0/x done part in water button when i decrease or increase jobs with the counter in the middle
+- [x] decrease zoom out in overview mode by like 20%
+- [x] projectile-type characters reload animation should be just black and white (white should be spinny part) and i notice it shooting during a reload animation being active looks weird. also make it 30% smaller
+- [x] when continuing old save, barren crop spots were reseeded back again why?
+- [x] auto wall caused weird edits to my map (like remove blocked tiles that should be blocked cause a building blocked it) and didint complete wall creation when it couldve. why is this investigate and tell me
+- [x] double check achievements like "defeat 30 raiders" or any others that may not be possible during the 7 days of game demo
+- [x] cant see enemy or troop health on shooting with projectile, make sure enemy or troop healthbar come up when shot like when hit with a melee
+- [x] lower the wall alpha when in queue mode in map, almost looks already placed
 
 ## Pre release must do
 - re-add completed tutorial save to save manager again on tutorial completion once fully
