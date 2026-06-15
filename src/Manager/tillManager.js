@@ -80,7 +80,12 @@ export class tillManager {
         Teams.removeFromStateArray(sprite.body.team, "TeamFarmSpots", sprite.task);
         Teams.removeFromStateArray(sprite.body.team, "cropList", sprite.task);
 
-        const harvestsRemaining = Math.max(1, Number(cropData.harvestsRemaining || Teams.CROP_HARVEST_CHARGES || 1));
+        const maxHarvestCharges = Math.max(1, Math.floor(Number(Teams.CROP_HARVEST_CHARGES || 1)));
+        const rawHarvestsRemaining = Math.floor(Number(cropData.harvestsRemaining || maxHarvestCharges));
+        const harvestsRemaining = Math.max(
+            1,
+            Math.min(maxHarvestCharges, Number.isFinite(rawHarvestsRemaining) ? rawHarvestsRemaining : maxHarvestCharges)
+        );
         if (harvestsRemaining > 1) {
             cropData.harvestsRemaining = harvestsRemaining - 1;
             cropData.sprite?.setFrame?.(1 + cropData.growthStage);

@@ -17,7 +17,6 @@ import { Player } from "../players/Player";
 import { fightManager } from "../Manager/fightManager";
 import { Wall } from "../buildings/Wall";
 import { AudioManager } from "../Manager/AudioManager";
-import { townBounds, townRoads } from "../town";
 import {
   MARKET_CARD_KIND,
   MARKET_PLACEHOLDER_ASSETS,
@@ -260,72 +259,6 @@ function isCellInBounds(bounds, x, y) {
   return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
 }
 
-function normalizeTownBounds(bounds) {
-  if (!bounds) return null;
-  const minX = Number(bounds.minX ?? bounds.minx);
-  const minY = Number(bounds.minY ?? bounds.miny);
-  const maxX = Number(bounds.maxX ?? bounds.maxx);
-  const maxY = Number(bounds.maxY ?? bounds.maxy);
-  if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
-  return {
-    minX: Math.min(minX, maxX),
-    minY: Math.min(minY, maxY),
-    maxX: Math.max(minX, maxX),
-    maxY: Math.max(minY, maxY),
-  };
-}
-
-function intersectBounds(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  const out = {
-    minX: Math.max(a.minX, b.minX),
-    minY: Math.max(a.minY, b.minY),
-    maxX: Math.min(a.maxX, b.maxX),
-    maxY: Math.min(a.maxY, b.maxY),
-  };
-  if (out.maxX < out.minX || out.maxY < out.minY) return null;
-  return out;
-}
-
-function getAutoWallBounds(scene, teamNumber = PLAYER_TEAM) {
-  const islandBounds = getMainIslandBounds(scene);
-  const generatedBounds = normalizeTownBounds(
-    townBounds?.[String(teamNumber)] ?? townBounds?.[teamNumber]
-  );
-  return intersectBounds(islandBounds, generatedBounds) || islandBounds;
-}
-
-function getTeamTownFootprint(teamNumber = PLAYER_TEAM, bounds = null) {
-  const team = Teams.getTeam?.(teamNumber) ?? Teams.teamLists?.[String(teamNumber)];
-  const cells = [];
-  const pushCell = (x, y) => {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    if (bounds && !isCellInBounds(bounds, x, y)) return;
-    cells.push({ x, y });
-  };
-
-  for (const entry of team?.buildings || []) {
-    const x = Number(entry?.[0] ?? entry?.x);
-    const y = Number(entry?.[1] ?? entry?.y);
-    const type = entry?.[2] || entry?.type || entry?.tileType;
-    const lenX = Math.max(1, Number(type?.lenX ?? 1));
-    const lenY = Math.max(1, Number(type?.lenY ?? 1));
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    for (let yy = y; yy < y + lenY; yy++) {
-      for (let xx = x; xx < x + lenX; xx++) pushCell(xx, yy);
-    }
-  }
-
-  for (const road of townRoads?.[String(teamNumber)] || []) {
-    const x = Number(Array.isArray(road) ? road[0] : road?.x);
-    const y = Number(Array.isArray(road) ? road[1] : road?.y);
-    pushCell(x, y);
-  }
-
-  return cells;
-}
-
 function getAutoWallCropState(x, y, teamNumber = PLAYER_TEAM) {
   const crop = Teams.getCropAt?.(x, y, teamNumber) ?? null;
   if (crop) {
@@ -345,6 +278,7 @@ function getAutoWallCropState(x, y, teamNumber = PLAYER_TEAM) {
 
 function getAutoWallBuildInfo(bounds, x, y) {
   if (!isCellInBounds(bounds, x, y) || !inWorldBounds(x, y)) return { ok: false };
+  if (GameMap.isPlacementTooCloseToShore?.(x, y, 1, 1, { placementType: AUTO_WALL_TYPE }, AUTO_WALL_TYPE)) return { ok: false };
   if (isWaterCell(x, y)) return { ok: false };
   const cropState = getAutoWallCropState(x, y, PLAYER_TEAM);
   if (cropState.hasCrop && !cropState.clearSeedless) return { ok: false };
@@ -419,19 +353,14 @@ function pickAutoWallDoorCell(seg, buildableCells) {
 }
 
 function computeAutoWallCells(scene) {
-  const bounds = getAutoWallBounds(scene, PLAYER_TEAM);
-  const cells = getTeamTownFootprint(PLAYER_TEAM, bounds).filter((cell) => inWorldBounds(cell.x, cell.y));
-  if (!cells.length) return [];
+  const bounds = getMainIslandBounds(scene);
+  const wallMargin = GameMap.WALL_SHORE_MARGIN ?? 1;
+  const minX = Math.ceil(bounds.minX + wallMargin);
+  const maxX = Math.floor(bounds.maxX - wallMargin);
+  const minY = Math.ceil(bounds.minY + wallMargin);
+  const maxY = Math.floor(bounds.maxY - wallMargin);
 
-  let minX = Math.min(...cells.map((cell) => cell.x));
-  let maxX = Math.max(...cells.map((cell) => cell.x));
-  let minY = Math.min(...cells.map((cell) => cell.y));
-  let maxY = Math.max(...cells.map((cell) => cell.y));
-
-  minX = Math.max(bounds.minX, minX - 2);
-  maxX = Math.min(bounds.maxX, maxX + 2);
-  minY = Math.max(bounds.minY, minY - 2);
-  maxY = Math.min(bounds.maxY, maxY + 2);
+  if (minX > maxX || minY > maxY) return [];
 
   const segments = [
     Array.from({ length: maxX - minX + 1 }, (_, index) => ({ x: minX + index, y: minY })),
@@ -487,6 +416,10 @@ function placeWallCells(scene, cells) {
     const tileType = cell.tileType === AUTO_WALL_DOOR_TYPE ? AUTO_WALL_DOOR_TYPE : AUTO_WALL_TYPE;
     const isDoor = tileType === AUTO_WALL_DOOR_TYPE;
     let placed = false;
+
+    if (GameMap.isPlacementTooCloseToShore?.(cell.x, cell.y, 1, 1, { placementType: tileType }, tileType)) {
+      continue;
+    }
 
     if (cell.clearSeedlessCrop) {
       clearSeedlessCropForAutoWall(scene, cell.x, cell.y);

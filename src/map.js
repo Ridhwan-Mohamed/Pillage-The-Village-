@@ -35,6 +35,10 @@ const colors = {
 };
 
 const OUTER_WATER_TILE_DIMENSION = 250;
+const SHORE_PLACEMENT_MESSAGE = "Too close to shore";
+const WALL_SHORE_MARGIN = 1;
+const BUILDING_SHORE_MARGIN = 2;
+const WALL_PLACEMENT_TYPES = new Set(["wall", "woodWall", "wall_door", "woodWall_door"]);
 
 export class Map{
     static barrier;
@@ -68,6 +72,9 @@ export class Map{
     static worldSpawners = [];
     static navGridRevision = 0;
     static navGridRevisionReason = null;
+    static SHORE_PLACEMENT_MESSAGE = SHORE_PLACEMENT_MESSAGE;
+    static WALL_SHORE_MARGIN = WALL_SHORE_MARGIN;
+    static BUILDING_SHORE_MARGIN = BUILDING_SHORE_MARGIN;
 
     static getNavGridRevision() {
         return Math.max(0, Number(this.navGridRevision || 0));
@@ -373,6 +380,7 @@ export class Map{
                         paddingAllowWalls: true,
                         paddingProtectFarmSpots: false,
                         allowAutoClearSite: true,
+                        placementType: item,
                     } : {}
                 );
                 this.placingItem.setTint(tintColor);
@@ -394,7 +402,7 @@ export class Map{
         placingItem.setPosition(x + Math.floor(item.lenX/2)*SQUARESIZE, y + Math.floor(item.lenY/2)*SQUARESIZE); // Finalize position
         x = Math.floor(x/SQUARESIZE)
         y = Math.floor(y/SQUARESIZE)
-        if (item?.block && !this.isWithinMainIslandBuildInterior(x, y, item.lenX, item.lenY)) {
+        if (item?.block && this.isPlacementTooCloseToShore(x, y, item.lenX, item.lenY, {}, item)) {
             return null;
         }
         this.drawRoadAround(x,y,item)
@@ -593,6 +601,40 @@ export class Map{
         );
     }
 
+    static isWallPlacementType(typeOrName) {
+        const name = typeof typeOrName === "string"
+            ? typeOrName
+            : (typeOrName?.name ?? typeOrName?.value ?? typeOrName?.key ?? null);
+        return WALL_PLACEMENT_TYPES.has(name);
+    }
+
+    static shoreMarginForPlacement(typeOrName = null, fallback = BUILDING_SHORE_MARGIN) {
+        return this.isWallPlacementType(typeOrName) ? WALL_SHORE_MARGIN : fallback;
+    }
+
+    static _placementShoreMargin(options = {}, typeOrName = null) {
+        if (Number.isFinite(options?.shoreMargin)) {
+            return Math.max(0, Math.floor(Number(options.shoreMargin)));
+        }
+        const placementType = typeOrName ?? options?.placementType ?? options?.type ?? null;
+        return this.shoreMarginForPlacement(placementType, BUILDING_SHORE_MARGIN);
+    }
+
+    static isPlacementTooCloseToShore(posX, posY, lenX = 1, lenY = 1, options = {}, typeOrName = null) {
+        const margin = this._placementShoreMargin(options, typeOrName);
+        return !this.isWithinMainIslandBuildInterior(posX, posY, lenX, lenY, margin);
+    }
+
+    static _setPlacementBlockReason(previewItem, reason = null) {
+        if (!previewItem) return;
+        previewItem._placementBlockReason = reason;
+        previewItem._placementBlockMessage = reason === "shore" ? SHORE_PLACEMENT_MESSAGE : null;
+    }
+
+    static getPlacementBlockMessage(previewItem = null, fallback = null) {
+        return previewItem?._placementBlockMessage || fallback || null;
+    }
+
     static _cellHasPlacedCrop(x, y) {
         const row = this.grid?.[y];
         if (!row || row[x] == null) return false;
@@ -705,7 +747,7 @@ export class Map{
 
     static _placementAutoClearTargets(posX, posY, lenX, lenY, options = {}, blocked = false) {
         if (blocked || !options?.allowAutoClearSite) return [];
-        if (!this.isWithinMainIslandBuildInterior(posX, posY, lenX, lenY)) return [];
+        if (this.isPlacementTooCloseToShore(posX, posY, lenX, lenY, options)) return [];
 
         const targets = [];
         const seen = new Set();
@@ -874,10 +916,12 @@ export class Map{
 
     // New array-aware placement check (used for building previews)
     static checkBlockPosition(posX, posY, lenX, lenY, previewItem = this.placingItem, options = {}) {
+        const tooCloseToShore = this.isPlacementTooCloseToShore(posX, posY, lenX, lenY, options, previewItem?._placementItem);
         const blocked =
-            !this.isWithinMainIslandBuildInterior(posX, posY, lenX, lenY) ||
+            tooCloseToShore ||
             this._placementIsBlocked(posX, posY, lenX, lenY, options);
         if (previewItem) previewItem.blocked = blocked;
+        this._setPlacementBlockReason(previewItem, tooCloseToShore ? "shore" : (blocked ? "blocked" : null));
         this._updatePlacementAutoClearPreview(posX, posY, lenX, lenY, previewItem, options, blocked);
         if (blocked) {
             return Phaser.Display.Color.GetColor(200, 49, 19); // red
@@ -887,7 +931,7 @@ export class Map{
 
     // (Optional) make the generator check consistent with the new rules
     static checkBlockPositionGen(posX, posY, lenX, lenY, options = {}) {
-        if (options?.enforceMainIslandInterior && !this.isWithinMainIslandBuildInterior(posX, posY, lenX, lenY)) {
+        if (options?.enforceMainIslandInterior && this.isPlacementTooCloseToShore(posX, posY, lenX, lenY, options)) {
             return true;
         }
         return this._placementIsBlocked(posX, posY, lenX, lenY, options);
@@ -901,7 +945,7 @@ export class Map{
         const lenX = (maxX - startX) + 1;
         const lenY = (maxY - startY) + 1;
 
-        if (!this.isWithinMainIslandBuildInterior(startX, startY, lenX, lenY)) {
+        if (this.isPlacementTooCloseToShore(startX, startY, lenX, lenY, { shoreMargin: BUILDING_SHORE_MARGIN })) {
             return true;
         }
 

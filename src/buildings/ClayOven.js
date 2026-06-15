@@ -524,6 +524,7 @@ export class ClayOven {
                     paddingAllowWalls: true,
                     paddingProtectFarmSpots: false,
                     allowAutoClearSite: true,
+                    placementType: TILE_TYPES.clayOven,
                 }
             );
             const isBlocked = !!ghost.blocked;

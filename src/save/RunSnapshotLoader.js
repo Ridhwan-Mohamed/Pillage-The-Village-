@@ -536,8 +536,10 @@ function restoreSavedCropStates() {
 
       const hasSeed = saved?.hasSeed === true;
       const growthStage = Math.max(0, Math.min(MAX_CROP_GROWTH_STAGE, Number(saved?.growthStage || 0)));
+      const maxHarvestCharges = Math.max(1, Math.floor(Number(Teams.CROP_HARVEST_CHARGES || 1)));
+      const rawHarvestsRemaining = Math.floor(Number(saved?.harvestsRemaining ?? maxHarvestCharges));
       const harvestsRemaining = hasSeed && growthStage >= MAX_CROP_GROWTH_STAGE
-        ? Math.max(1, Number(saved?.harvestsRemaining ?? Teams.CROP_HARVEST_CHARGES ?? 1))
+        ? Math.min(maxHarvestCharges, Math.max(1, Number.isFinite(rawHarvestsRemaining) ? rawHarvestsRemaining : maxHarvestCharges))
         : 0;
       const crop = {
         sprite,

@@ -5033,8 +5033,8 @@ export class GameUIScene extends Phaser.Scene {
 
     const glow = this.add.circle(-width * 0.22, -height * 0.12, Math.max(20, Math.round(width * 0.18)), accent, 0.12);
     const shimmer = this.add.circle(width * 0.18, -height * 0.2, Math.max(12, Math.round(width * 0.08)), 0xffffff, 0.10);
-    const textFlagHeight = Math.max(52, Math.round(height * 0.42));
-    const textFlagY = (height / 2) - (textFlagHeight / 2) - 10;
+    const textFlagHeight = Math.max(66, Math.round(height * 0.45));
+    const textFlagY = textFlagHeight / 2;
     const textFlag = this.add.graphics();
     this._drawRoundedPanel(textFlag, width - 16, textFlagHeight, {
       radius: 18,
@@ -5517,7 +5517,7 @@ export class GameUIScene extends Phaser.Scene {
     const gapX = cols >= 5 ? 12 : 18;
     const gapY = 16;
     const cardWidth = Math.min(cols >= 5 ? 176 : 224, Math.floor((panelWidth - 120 - (gapX * Math.max(0, cols - 1))) / Math.max(1, cols)));
-    const cardHeight = cam.width < 760 ? 124 : 132;
+    const cardHeight = cam.width < 760 ? 138 : 146;
     const gridTop = -(panelHeight / 2) + 270;
     const rows = Math.ceil(primaryStats.length / Math.max(1, cols));
     const gridBottom = gridTop + (rows * cardHeight) + (Math.max(0, rows - 1) * gapY);

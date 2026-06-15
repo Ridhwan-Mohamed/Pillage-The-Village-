@@ -1395,9 +1395,9 @@ export default class BuildTab {
       if (!genericPlacementActive && !specialPlacementActive) return;
 
       if (specialPlacer) {
-        if (!specialPlacementActive || specialPlacer.placementState?.topSprite?.blocked) return;
+        if (!specialPlacementActive) return;
       } else {
-        if (!genericPlacementActive || GameMap.placingItem?.blocked) return;
+        if (!genericPlacementActive) return;
       }
 
       // Don’t place through the bottom bar
@@ -1420,6 +1420,31 @@ export default class BuildTab {
 
         gridX = Math.floor(x / SQUARESIZE) - Math.floor(lenX / 2);
         gridY = Math.floor(y / SQUARESIZE) - Math.floor(lenY / 2);
+      }
+
+      const placementSprite = specialPlacer ? specialPlacer.placementState?.topSprite : GameMap.placingItem;
+      GameMap.checkBlockPosition(
+        gridX,
+        gridY,
+        lenX,
+        lenY,
+        placementSprite,
+        tile.block ? {
+          padding: 1,
+          protectFarmSpots: true,
+          paddingAllowWalls: true,
+          paddingProtectFarmSpots: false,
+          allowAutoClearSite: true,
+          placementType: tile,
+        } : { placementType: tile }
+      );
+      if (placementSprite?.blocked) {
+        const message = GameMap.getPlacementBlockMessage?.(placementSprite);
+        if (message) {
+          showAlert(this.scene, message, "#ff5555");
+          AudioManager.playError?.({ volume: 0.2 });
+        }
+        return;
       }
 
       const costObj = getDefCost(this.pendingDef, this.scene);
@@ -1458,7 +1483,7 @@ export default class BuildTab {
           prepaid: Object.keys(costObj).length > 0,
         }, 1);
         if (!queuedTask) {
-          showAlert(this.scene, "Cannot build there", "#ff5555");
+          showAlert(this.scene, buildingManager.getLastBlockBuildQueueFailureMessage?.() || "Cannot build there", "#ff5555");
           return;
         }
         this._clearSelection(true);

@@ -11,7 +11,7 @@ export class Teams {
     static DEFAULT_CROP_RESEED_CHANCE = 0.15;
     static cropReseedChance = 0.15;
     static DEFAULT_WATER_BATCH_COUNT = 5;
-    static CROP_HARVEST_CHARGES = 2;
+    static CROP_HARVEST_CHARGES = 1;
 
     static resetAll() {
       this.teamLists = {};
@@ -981,7 +981,7 @@ export class Teams {
           crop.sprite.setFrame(frame);
 
           if (frame === 3) {
-            crop.harvestsRemaining = Math.max(1, Number(crop.harvestsRemaining || this.CROP_HARVEST_CHARGES));
+            crop.harvestsRemaining = Math.max(1, Math.floor(Number(this.CROP_HARVEST_CHARGES || 1)));
             this.addFarmSpots(crop.sprite, crop.x, crop.y);
           }
         }

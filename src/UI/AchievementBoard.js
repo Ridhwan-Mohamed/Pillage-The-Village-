@@ -8,7 +8,7 @@ import {
 
 const BOARD_W = 300;
 const HEADER_H = 30;
-const ROW_H = 58;
+const ROW_H = 68;
 const ROW_GAP = 15;
 const PANEL_BOTTOM_PAD = 35;
 const PROGRESS_X = (BOARD_W / 2) - 106;
@@ -124,8 +124,8 @@ export class AchievementBoard {
       wordWrap: { width: 146 },
     })).setOrigin(0, 0.5);
     const desc = this.scene.add.text(-(BOARD_W / 2) + 26, 16, "", createBodyTextStyle({
-      fontSize: 11,
-      min: 11,
+      fontSize: 12,
+      min: 12,
       color: "#cfe4f2",
       wordWrap: { width: 150 },
     })).setOrigin(0, 0.5);

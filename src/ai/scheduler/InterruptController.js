@@ -40,6 +40,7 @@ export class InterruptController {
         troop.taskMeta = null;
 
         this._cleanupRoleLocalRefs(troop, shouldDeferCarry);
+        troop.type?.syncOvenJobAssignments?.(troop.body?.team);
 
         if (targetState !== null && targetState !== undefined) {
             Teams.movePlayerState(troop, targetState);

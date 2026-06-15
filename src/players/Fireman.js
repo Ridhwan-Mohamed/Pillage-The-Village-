@@ -116,17 +116,17 @@ export class Fireman {
         // If currently fleeing, only maintain flee behaviour.
         if (troop.state === CONTROL_STATES.FLEE_MODE) {
             Player.updateTracking(troop);   // may keep fleeing or drop back to TRACK_MODE when safe
+            Fireman.syncOvenJobAssignments(troop.body?.team);
             return;
         }
 
         // Always check for nearby enemies first (can flip into FLEE_MODE and drop tasks).
         Player.updateTracking(troop);
+        Fireman.syncOvenJobAssignments(troop.body?.team);
         if (troop.state === CONTROL_STATES.FLEE_MODE) {
             // Just started fleeing this tick; do not do fireman/oven logic.
             return;
         }
-
-        Fireman.syncOvenJobAssignments(troop.body?.team);
 
         if (OrderRunner.stepUnit(troop)) return;
         if (troop.task) return;
@@ -139,50 +139,106 @@ export class Fireman {
         }
     }
 
+    static _taskItemName(task) {
+        return StorageManager.getItemName?.(task?.item) ?? task?.item?.name ?? null;
+    }
+
+    static _jobItemName(job, fallback = null) {
+        return StorageManager.getItemName?.(job?.item) ?? job?.item?.name ?? fallback;
+    }
+
+    static _storagePickupMatches(troop, itemName) {
+        return !!(
+            itemName &&
+            troop?.task?.taskType === "storagePickup" &&
+            Fireman._taskItemName(troop.task) === itemName
+        );
+    }
+
+    static _isActiveOvenJobRef(troop, job, kind) {
+        if (!troop?.active || !job || job.canceled) return false;
+
+        const task = troop.task || null;
+        if (kind === "fuel") {
+            const referencesJob =
+                troop.pendingFuelJob === job ||
+                troop.deferredCarry?.pendingFuelJob === job ||
+                task?.job === job;
+            if (!referencesJob) return false;
+            if (task?.job === job && task.taskType === "ovenFuelDelivery") return true;
+            if (StorageManager.isCarryingItem(troop, UI_ITEM_TYPES.wood)) return true;
+            if (Fireman._storagePickupMatches(troop, UI_ITEM_TYPES.wood.name)) return true;
+            return !!(
+                troop.pendingFuelJob === job &&
+                (troop.state === CONTROL_STATES.GET_FROM_STORAGE || troop.state === CONTROL_STATES.SEND_TO_OVEN)
+            );
+        }
+
+        const itemName = Fireman._jobItemName(job, UI_ITEM_TYPES.unclean_water.name);
+        const referencesJob =
+            troop.pendingOvenJob === job ||
+            troop.deferredCarry?.pendingOvenJob === job ||
+            task?.job === job;
+        if (!referencesJob) return false;
+        if (task?.job === job && task.taskType === "ovenDelivery") return true;
+        if (StorageManager.isCarryingItem(troop, itemName)) return true;
+        if (Fireman._storagePickupMatches(troop, itemName)) return true;
+        if (
+            itemName === UI_ITEM_TYPES.unclean_water.name &&
+            troop.pendingOvenJob === job &&
+            troop.state === CONTROL_STATES.GET_WATER_MODE
+        ) {
+            return true;
+        }
+        return !!(
+            troop.pendingOvenJob === job &&
+            (troop.state === CONTROL_STATES.GET_FROM_STORAGE || troop.state === CONTROL_STATES.SEND_TO_OVEN)
+        );
+    }
+
+    static _clearStaleOvenJobRefs(troop) {
+        if (!troop?.isFireman) return false;
+        let changed = false;
+
+        if (
+            troop.pendingFuelJob &&
+            !Fireman._isActiveOvenJobRef(troop, troop.pendingFuelJob, "fuel")
+        ) {
+            troop.pendingFuelJob = null;
+            changed = true;
+        }
+
+        if (
+            troop.pendingOvenJob &&
+            !Fireman._isActiveOvenJobRef(troop, troop.pendingOvenJob, "water")
+        ) {
+            troop.pendingOvenJob = null;
+            troop.skip = false;
+            changed = true;
+        }
+
+        if (troop.deferredCarry && !StorageManager.isCarrying(troop)) {
+            troop.deferredCarry = null;
+            changed = true;
+        }
+
+        return changed;
+    }
+
     static syncOvenJobAssignments(teamNumber) {
         const team = Teams.teamLists?.[`${teamNumber}`] ?? Teams.teamLists?.[teamNumber];
         if (!team) return false;
 
         const players = Array.isArray(team.playerList) ? team.playerList : [];
+        for (const troop of players) {
+            Fireman._clearStaleOvenJobRefs(troop);
+        }
+
         const countRefs = (job, kind) => {
             let count = 0;
             for (const troop of players) {
                 if (!troop?.active) continue;
-                const hasActiveWork = !!(
-                    troop.task ||
-                    troop.timer ||
-                    StorageManager.isCarrying(troop) ||
-                    troop.state === CONTROL_STATES.FLEE_MODE ||
-                    troop.state === CONTROL_STATES.GET_WATER_MODE ||
-                    troop.state === CONTROL_STATES.GET_FROM_STORAGE ||
-                    troop.state === CONTROL_STATES.SEND_TO_OVEN
-                );
-                if (!hasActiveWork) continue;
-
-                if (kind === "fuel") {
-                    if (troop.pendingFuelJob === job) {
-                        count += 1;
-                        continue;
-                    }
-                    if (troop.deferredCarry?.pendingFuelJob === job) {
-                        count += 1;
-                        continue;
-                    }
-                    if (troop.task?.job === job && troop.task?.taskType === "ovenFuelDelivery") {
-                        count += 1;
-                    }
-                    continue;
-                }
-
-                if (troop.pendingOvenJob === job) {
-                    count += 1;
-                    continue;
-                }
-                if (troop.deferredCarry?.pendingOvenJob === job) {
-                    count += 1;
-                    continue;
-                }
-                if (troop.task?.job === job && troop.task?.taskType === "ovenDelivery") {
+                if (Fireman._isActiveOvenJobRef(troop, job, kind)) {
                     count += 1;
                 }
             }

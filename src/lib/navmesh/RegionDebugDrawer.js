@@ -1,5 +1,6 @@
 // RegionDebugDrawer.js
 import { RegionSystem } from "./RegionSystem.js";
+import { bindDebugHotkey } from "../../debug/DebugHotkeys.js";
 
 export class RegionDebugDrawer {
   constructor(scene, navMesh, regionSystem, opts = {}) {
@@ -44,29 +45,20 @@ export class RegionDebugDrawer {
   }
 
   _bindKey() {
-    const isTyping = () => {
-      const el = document.activeElement;
-      if (!el) return false;
-      const tag = (el.tagName || "").toUpperCase();
-      return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
-    };
-
     this._onToggle = () => {
-      if (isTyping()) return;
       this.enabled = !this.enabled;
       if (this.enabled) this.draw();
       else this.clear();
     };
 
-    this.scene.input.keyboard.on(`keydown-${this.toggleKey}`, this._onToggle);
+    this._debugHotkey = bindDebugHotkey(this.scene, this.toggleKey, this._onToggle);
   }
 
   destroy() {
     // unbind key
-    if (this._onToggle) {
-      this.scene.input.keyboard.off(`keydown-${this.toggleKey}`, this._onToggle);
-      this._onToggle = null;
-    }
+    this._debugHotkey?.destroy?.();
+    this._debugHotkey = null;
+    this._onToggle = null;
 
     // remove graphics + legend
     this.clear();

@@ -20,6 +20,9 @@ function getFloorVal(cellVal){
 
 const ROAD_PAD = 1;
 const WALL_PAD = ROAD_PAD + 1; // walls sit one tile outside the road ring
+const WALL_SHORE_MARGIN = 1;
+const BUILDING_SHORE_BUFFER = 2;
+const SHORE_REASON = "shore";
 const DRAFT_SPAWN_ICON_TILE_FILL = 1;
 const DRAFT_SPAWN_ICON_HOVER_SCALE = 1.12;
 const DRAFT_SPAWN_ICON_HIT_PAD = 4;
@@ -88,7 +91,7 @@ export class DraftStartPreviewController {
     );
   }
 
-  _touchesWaterBuffer(gridX, gridY, width, height, buffer = 1) {
+  _touchesWaterBuffer(gridX, gridY, width, height, buffer = BUILDING_SHORE_BUFFER) {
     for (let yy = gridY - buffer; yy < gridY + height + buffer; yy++) {
       for (let xx = gridX - buffer; xx < gridX + width + buffer; xx++) {
         if (xx < 0 || yy < 0 || xx >= this.srcW || yy >= this.srcH) {
@@ -131,7 +134,7 @@ export class DraftStartPreviewController {
     }
 
     if (this._touchesWaterBuffer(gridX, gridY, t.lenX, t.lenY)) {
-      return { ok:false, reason:"too close to water" };
+      return { ok:false, reason:SHORE_REASON };
     }
 
     // 2) must be 1 tile away from OTHER BUILDINGS (not terrain)
@@ -255,10 +258,10 @@ export class DraftStartPreviewController {
 
     // apply padding once (same as _boundsOfPlaced)
     return {
-      minx: clamp(minx - WALL_PAD, 1, this.srcW - 2),
-      miny: clamp(miny - WALL_PAD, 1, this.srcH - 2),
-      maxx: clamp(maxx + WALL_PAD, 1, this.srcW - 2),
-      maxy: clamp(maxy + WALL_PAD, 1, this.srcH - 2),
+      minx: clamp(minx - WALL_PAD, WALL_SHORE_MARGIN, this.srcW - 1 - WALL_SHORE_MARGIN),
+      miny: clamp(miny - WALL_PAD, WALL_SHORE_MARGIN, this.srcH - 1 - WALL_SHORE_MARGIN),
+      maxx: clamp(maxx + WALL_PAD, WALL_SHORE_MARGIN, this.srcW - 1 - WALL_SHORE_MARGIN),
+      maxy: clamp(maxy + WALL_PAD, WALL_SHORE_MARGIN, this.srcH - 1 - WALL_SHORE_MARGIN),
     };
   }
 
@@ -886,7 +889,12 @@ export class DraftStartPreviewController {
   tryPlaceExtra(typeKey, state, gridX, gridY){
     const type = TILE_TYPES[typeKey];
     if (!type) return { ok:false, reason:"unknown_type" };
-    if (!this._footprintOk(gridX, gridY, type)) return { ok:false, reason:"blocked" };
+    if (!this._footprintOk(gridX, gridY, type)) {
+      return {
+        ok:false,
+        reason: this._touchesWaterBuffer(gridX, gridY, type.lenX, type.lenY) ? SHORE_REASON : "blocked",
+      };
+    }
 
     this._placeStructure(gridX, gridY, type, "draftPreview");
 
@@ -964,10 +972,10 @@ export class DraftStartPreviewController {
     }
     // +1 padding so roads don't get covered by walls
     return {
-      minx: clamp(minx - WALL_PAD, 1, this.srcW - 2),
-      miny: clamp(miny - WALL_PAD, 1, this.srcH - 2),
-      maxx: clamp(maxx + WALL_PAD, 1, this.srcW - 2),
-      maxy: clamp(maxy + WALL_PAD, 1, this.srcH - 2)
+      minx: clamp(minx - WALL_PAD, WALL_SHORE_MARGIN, this.srcW - 1 - WALL_SHORE_MARGIN),
+      miny: clamp(miny - WALL_PAD, WALL_SHORE_MARGIN, this.srcH - 1 - WALL_SHORE_MARGIN),
+      maxx: clamp(maxx + WALL_PAD, WALL_SHORE_MARGIN, this.srcW - 1 - WALL_SHORE_MARGIN),
+      maxy: clamp(maxy + WALL_PAD, WALL_SHORE_MARGIN, this.srcH - 1 - WALL_SHORE_MARGIN)
     };
 
   }
@@ -1149,7 +1157,7 @@ export class DraftStartPreviewController {
     }
 
     if (this._touchesWaterBuffer(gridX, gridY, t.lenX, t.lenY)) {
-      return { ok:false, reason:"too close to water" };
+      return { ok:false, reason:SHORE_REASON };
     }
 
     // 2) Must be 1 tile away from OTHER buildings (ignore selected itself)
@@ -1223,10 +1231,10 @@ export class DraftStartPreviewController {
 
     // apply padding ONCE for the ghost ring
     const bounds = {
-      minx: clamp(minx - WALL_PAD, 1, this.srcW - 2),
-      miny: clamp(miny - WALL_PAD, 1, this.srcH - 2),
-      maxx: clamp(maxx + WALL_PAD, 1, this.srcW - 2),
-      maxy: clamp(maxy + WALL_PAD, 1, this.srcH - 2),
+      minx: clamp(minx - WALL_PAD, WALL_SHORE_MARGIN, this.srcW - 1 - WALL_SHORE_MARGIN),
+      miny: clamp(miny - WALL_PAD, WALL_SHORE_MARGIN, this.srcH - 1 - WALL_SHORE_MARGIN),
+      maxx: clamp(maxx + WALL_PAD, WALL_SHORE_MARGIN, this.srcW - 1 - WALL_SHORE_MARGIN),
+      maxy: clamp(maxy + WALL_PAD, WALL_SHORE_MARGIN, this.srcH - 1 - WALL_SHORE_MARGIN),
     };
 
     // before drawing ghost

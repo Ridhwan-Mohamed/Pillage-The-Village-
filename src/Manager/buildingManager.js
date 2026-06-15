@@ -155,9 +155,19 @@ export class buildingManager{
         const team = Teams.teamLists[teamNumber];
         if (!Array.isArray(team.buildingTileStates)) team.buildingTileStates = [];
 
+        let queuedAny = false;
         tiles.forEach(tile => {
                 const typeName = tile.buildTypeName ?? buildTypeName ?? "wall";
                 const buildType = TILE_TYPES[typeName] ?? TILE_TYPES.wall;
+                if (Map.isPlacementTooCloseToShore?.(tile.x, tile.y, 1, 1, { placementType: buildType }, buildType)) {
+                    this._refundQueuedBuildCost({
+                        type: buildType,
+                        buildType,
+                        refundCost: tile.refundCost ?? buildType.cost ?? buildType.price ?? null,
+                        prepaid: !!tile.prepaid,
+                    }, teamNumber);
+                    return;
+                }
 
                 const task = {
                 x: tile.x,
@@ -174,8 +184,10 @@ export class buildingManager{
                 queueKey: "buildingTileStates",
                 };
                 team.buildingTileStates.push(task);
+                queuedAny = true;
         });
 
+        if (!queuedAny) return;
         this.prepareQueuedWallJobPlans(teamNumber);
         this.refreshQueuedTileBuildGhosts(teamNumber);
         this.assingTroopsToBuildTile?.(teamNumber);
@@ -2117,10 +2129,17 @@ export class buildingManager{
         return { ok: false, reason, detail };
     }
 
+    static getLastBlockBuildQueueFailureMessage() {
+        if (this._lastBlockBuildQueueFailure?.reason === "shore") {
+            return Map.SHORE_PLACEMENT_MESSAGE ?? "Too close to shore";
+        }
+        return null;
+    }
+
     static _analyzeBlockBuildSite(task, teamNumber = 1) {
         if (!task?.type) return this._blockBuildSiteFailure("invalid");
-        if (!Map.isWithinMainIslandBuildInterior?.(task.x, task.y, task.type.lenX, task.type.lenY)) {
-            return this._blockBuildSiteFailure("outside");
+        if (Map.isPlacementTooCloseToShore?.(task.x, task.y, task.type.lenX, task.type.lenY, { placementType: task.type }, task.type)) {
+            return this._blockBuildSiteFailure("shore");
         }
 
         const walls = [];
@@ -2484,6 +2503,7 @@ export class buildingManager{
         const team = Teams.teamLists?.[`${teamNumber}`] ?? Teams.teamLists?.[teamNumber];
         if (!team) return null;
         if (!Array.isArray(team.blockBuildingStates)) team.blockBuildingStates = [];
+        this._lastBlockBuildQueueFailure = null;
 
         const normalized = this._normalizeBlockBuildTask(task, teamNumber);
         if (!normalized) return null;

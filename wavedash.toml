@@ -1,0 +1,4 @@
+game_id = "j977jv1v8rf7dt3v505t973q5d88eafg"
+upload_dir = "dist-itch"
+
+entrypoint = "index.html"

@@ -258,6 +258,7 @@ export class DraftStartMenu {
     const confirmGlowWidth = confirmButtonWidth + Math.round(16 * scale);
     const confirmGlowHeight = confirmButtonHeight + Math.round(8 * scale);
     const backButtonWidth = clamp(Math.round(180 * scale), 148, 190);
+    const layoutInfoHeight = 158;
 
     return {
       width,
@@ -286,7 +287,7 @@ export class DraftStartMenu {
         300,
         Math.min(Math.round(width * 0.3), 380),
       ),
-      layoutInfoHeight: clamp(Math.round((compact ? 150 : 158) * scale), 124, 158),
+      layoutInfoHeight,
       layoutMoveHudWidth: clamp(Math.round(500 * scale), 320, Math.min(width - pagePad * 2, 560)),
       layoutMoveHudHeight: clamp(Math.round(34 * scale), 28, 36),
       layoutMoveHudY: footerY - Math.round((footerHeight / 2) + Math.round(24 * scale)),
@@ -577,6 +578,16 @@ export class DraftStartMenu {
     return Math.abs(gridX - originX) + Math.abs(gridY - originY);
   }
 
+  _getLayoutPlacementFailureText(result) {
+    if (result?.reason === "out of range") {
+      return `Too far: max ${this.state.layoutMoveRange ?? DEFAULT_LAYOUT_MOVE_RANGE} tiles`;
+    }
+    if (result?.reason === "shore") {
+      return "Too close to shore";
+    }
+    return "Invalid layout spot";
+  }
+
   _drawLayoutMoveHudBg(valid = true) {
     const bg = this.ui.layoutMoveHudBg;
     if (!bg || !this.layout) return;
@@ -696,9 +707,7 @@ export class DraftStartMenu {
       if (!moved?.ok) {
         AudioManager.playError({ volume: 0.18 });
         this._updateLayoutMoveHud(targetX, targetY);
-        const text = moved?.reason === "out of range"
-          ? `Too far: max ${this.state.layoutMoveRange ?? DEFAULT_LAYOUT_MOVE_RANGE} tiles`
-          : "Invalid layout spot";
+        const text = this._getLayoutPlacementFailureText(moved);
         this._showLayoutTooltip(pointer, text, TEXT_DANGER);
         return false;
       }

@@ -286,8 +286,9 @@ _initDoorPhysicsOnce() {
 
     // Phase 0: hover a single potential START tile
     if (this.phase === 0) {
-        const ok = this._canUseSegmentPivot(g.x, g.y);
-        this._setPhase1Text(ok, this._queuedCount());
+        const state = this._cellBuildState(g.x, g.y);
+        const ok = state.canBuildNew || state.incorporated;
+        this._setPhase1Text(ok, this._queuedCount(), state.reason);
         this.previewCells = [{ x: g.x, y: g.y }];
         this._redrawGhost(ok);
         return;
@@ -305,7 +306,7 @@ _initDoorPhysicsOnce() {
     const analysis = this._analyzeSegment(seg);
     const ok = analysis.valid;
     this.previewCells = seg;
-    this._setPhase2Text(ok, this._queuedCount(analysis.buildableCells));
+    this._setPhase2Text(ok, this._queuedCount(analysis.buildableCells), analysis.reason);
     this._redrawGhost(ok);
 }
 
@@ -326,7 +327,11 @@ _initDoorPhysicsOnce() {
 
     // Phase 0: pick START of a new segment
     if (this.phase === 0) {
-        if (!this._canUseSegmentPivot(g.x, g.y)) return;
+        const state = this._cellBuildState(g.x, g.y);
+        if (!(state.canBuildNew || state.incorporated)) {
+          this._showInvalidPlacementReason(state.reason);
+          return;
+        }
 
         this.segmentStart = { x: g.x, y: g.y };
         this.phase = 1;
@@ -342,7 +347,10 @@ _initDoorPhysicsOnce() {
 const seg = this._strictLineSegment(this.segmentStart, g);
 if (!seg || seg.length < 1) return;
 const analysis = this._analyzeSegment(seg);
-if (!analysis.valid) return;
+if (!analysis.valid) {
+  this._showInvalidPlacementReason(analysis.reason);
+  return;
+}
 
 let doorCell = null;
 let wallCells = analysis.buildableCells;
@@ -622,16 +630,26 @@ finalize() {
   _cellBuildState(x, y) {
     const info = GameMap._wallStructureInfoAt?.(x, y) || null;
     const queuedTile = this._queuedTileAt(x, y);
+    const tooCloseToShore = GameMap.isPlacementTooCloseToShore?.(
+      x,
+      y,
+      1,
+      1,
+      { placementType: this.wallTypeName },
+      this.wallTypeName
+    ) === true;
     const sameFamilyPlaced = this._sameWallFamilyName(info?.name);
     const sameFamilyQueued = this._sameWallFamilyName(queuedTile?.buildTypeName);
     const hasPlacedWall = !!info;
     const hasQueuedTile = !!queuedTile;
     const hasQueuedFarm = !!buildingManager.isTileReservedForFarm?.(x, y, "1");
     const canBuildNew =
+      !tooCloseToShore &&
       !!Map.navGrid[y]?.[x] &&
       !hasPlacedWall &&
       !hasQueuedTile &&
       !hasQueuedFarm;
+    const incorporated = !tooCloseToShore && (sameFamilyPlaced || sameFamilyQueued);
 
     return {
       info,
@@ -639,8 +657,9 @@ finalize() {
       hasQueuedFarm,
       sameFamilyPlaced,
       sameFamilyQueued,
-      incorporated: sameFamilyPlaced || sameFamilyQueued,
+      incorporated,
       canBuildNew,
+      reason: tooCloseToShore ? "shore" : null,
     };
   }
 
@@ -659,12 +678,13 @@ finalize() {
         continue;
       }
       if (state.incorporated) continue;
-      return { valid: false, buildableCells: [] };
+      return { valid: false, buildableCells: [], reason: state.reason };
     }
 
     return {
       valid: buildableCells.length > 0,
       buildableCells,
+      reason: buildableCells.length > 0 ? null : "blocked",
     };
   }
 
@@ -719,7 +739,7 @@ finalize() {
     if (!Map.navGrid[y]?.[x]) return false;
 
     const cell = Map.grid[y]?.[x];
-    if (!GameMap.isWithinMainIslandBuildInterior(x, y, 1, 1)) return false;
+    if (GameMap.isPlacementTooCloseToShore?.(x, y, 1, 1, { placementType: this.wallTypeName }, this.wallTypeName)) return false;
 
     const wallName = this.wallTypeName;
 
@@ -799,6 +819,12 @@ finalize() {
 
   _wallLabel() {
     return this.wallTypeName === "woodWall" ? "Wood Walls" : "Stone Walls";
+  }
+
+  _showInvalidPlacementReason(reason = null) {
+    if (reason !== "shore") return;
+    showAlert(this.scene, GameMap.SHORE_PLACEMENT_MESSAGE || "Too close to shore", "#ff5555");
+    AudioManager.playError?.({ volume: 0.22 });
   }
 
   _ensureUI() {
@@ -1125,8 +1151,10 @@ finalize() {
     parts[2]?.setColor(normalColor);
   }
 
-  _setPhase1Text(valid = true, count = this._queuedCount()) {
-    const action = count > 0 ? "click to start next segment" : "click to start placement";
+  _setPhase1Text(valid = true, count = this._queuedCount(), reason = null) {
+    const action = !valid && reason === "shore"
+      ? (GameMap.SHORE_PLACEMENT_MESSAGE || "Too close to shore")
+      : (count > 0 ? "click to start next segment" : "click to start placement");
     this._setInstructionParts(
       `Placing ${this._wallLabel()} | ${count} queued | ${action} | `,
       "ESC to cancel",
@@ -1136,9 +1164,12 @@ finalize() {
     this._layoutUI();
   }
 
-  _setPhase2Text(valid = true, count = this._queuedCount(this.previewCells)) {
+  _setPhase2Text(valid = true, count = this._queuedCount(this.previewCells), reason = null) {
+    const action = !valid && reason === "shore"
+      ? (GameMap.SHORE_PLACEMENT_MESSAGE || "Too close to shore")
+      : "click to end segment";
     this._setInstructionParts(
-      `Placing ${this._wallLabel()} | ${count} queued | click to end segment | `,
+      `Placing ${this._wallLabel()} | ${count} queued | ${action} | `,
       "ESC to undo",
       "",
       valid

@@ -4,6 +4,7 @@ import { Map } from "./map";
 import { Player } from "./players/Player";
 import { Teams } from "./Teams";
 import { WaveCollapse } from "./waveCollapse";
+import { bindDebugHotkey } from "./debug/DebugHotkeys.js";
 
 export var playerDict = {}
 export var townBounds = {}
@@ -11,6 +12,7 @@ export var townRoads = {};
 export var spawnPoints = [];
 
 const PLAYERS_PER_HOUSE = 1;
+const BUILDING_SHORE_BUFFER = 2;
 
 export function clearPlayerDict(){
     playerDict = {}
@@ -18,26 +20,32 @@ export function clearPlayerDict(){
 
 export var buildingArray = []
 
+function touchesWaterBuffer(grid, x, y, width, height, buffer = BUILDING_SHORE_BUFFER) {
+    for (let yy = y - buffer; yy < y + height + buffer; yy++) {
+        for (let xx = x - buffer; xx < x + width + buffer; xx++) {
+            if (yy < 0 || xx < 0 || yy >= grid.length || xx >= grid[0].length) {
+                return true;
+            }
+            const cell = grid[yy][xx];
+            const base = Array.isArray(cell) ? cell[0] : cell;
+            if (TILE_MAP(base) === "water") {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 
 export function clearBuildingArray(){
     buildingArray.length = 0;
 }
 
 export function setupTownBoundsToggle(scene) {
-    const isTyping = () => {
-      const el = document.activeElement;
-      if (!el) return false;
-      const tag = (el.tagName || "").toUpperCase();
-      return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
-    };
-
     let boundsGroup = null;
     let showing = false;
   
-    // Listen for "T" key
-    const keyT = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
-    keyT.on('down', () => {
-      if (isTyping()) return;
+    bindDebugHotkey(scene, "T", () => {
       if (showing) {
         // Remove all drawn bounds
         boundsGroup.clear(true, true);
@@ -298,6 +306,7 @@ function canPlaceBuildingAtAnyCorner(grid, x, y, building) {
 
     for (let { ox, oy, name } of possibleOrigins) {
         if (ox < 0 || oy < 0 || ox + width > gridWidth || oy + height > gridHeight) continue; // Out of bounds
+        if (touchesWaterBuffer(grid, ox, oy, width, height)) continue;
 
         let canFit = true;
         for (let dx = 0; dx < width; dx++) {

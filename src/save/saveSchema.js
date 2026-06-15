@@ -2,7 +2,7 @@ export const RUN_SAVE_STORAGE_KEY = "processv2.run_save_v1";
 export const RUN_SAVE_META_STORAGE_KEY = "processv2.run_save_meta_v1";
 export const TUTORIAL_PROFILE_STORAGE_KEY = "processv2.tutorial_profile_v1";
 export const SAVE_SCHEMA_VERSION = 1;
-export const SAVE_BUILD_LABEL = "v0.9.9";
+export const SAVE_BUILD_LABEL = "v1.0.0";
 
 export function getSaveStorage() {
   try {

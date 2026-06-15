@@ -2,6 +2,7 @@
 import { SQUARESIZE, WORLD_DIMENSIONX, WORLD_DIMENSIONY } from '../../constants.js';
 import { NavMesh } from './navmesh.js';
 import { buildPolysFromGridMap } from './map-parsers/build-polys-from-grid-map.js';
+import { bindDebugHotkey } from '../../debug/DebugHotkeys.js';
 
 export class NavMeshUpdater {
     constructor(navMesh, scene, opts) {
@@ -20,28 +21,19 @@ export class NavMeshUpdater {
     }
 
     _setupToggleKey() {
-        const isTyping = () => {
-            const el = document.activeElement;
-            if (!el) return false;
-            const tag = (el.tagName || "").toUpperCase();
-            return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
-        };
-
         this._onToggle = () => {
-            if (isTyping()) return;
             this.debugEnabled = !this.debugEnabled;
             if (this.debugEnabled) this.drawDebug();
             else this.clearDebug();
         };
-        this.scene.input.keyboard.on(`keydown-${this._toggleKey}`, this._onToggle);
+        this._debugHotkey = bindDebugHotkey(this.scene, this._toggleKey, this._onToggle);
     }
 
     destroy() {
         // remove key listener
-        if (this._onToggle) {
-            this.scene.input.keyboard.off(`keydown-${this._toggleKey}`, this._onToggle);
-            this._onToggle = null;
-        }
+        this._debugHotkey?.destroy?.();
+        this._debugHotkey = null;
+        this._onToggle = null;
         // kill any drawn graphics
         this.clearDebug();
     }

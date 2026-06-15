@@ -1060,14 +1060,15 @@ export class MainMenu {
         const parallaxNearLayer = overlayScene.add.container(0, 0);
         const parallaxEdgeLayer = overlayScene.add.container(0, 0);
         const logo = overlayScene.add.image(centerX, logoY, 'logo').setOrigin(0.5).setScale(logoScale);
-        const versionText = overlayScene.add.text(overlayScene.scale.width - 95, overlayScene.scale.height - 20, 'v0.9.9', {
-            fontSize: '22px',
-            fill: '#e9fbff',
+        const versionText = overlayScene.add.text(overlayScene.scale.width - 95, overlayScene.scale.height - 20, 'v1.0.0', {
+            fontSize: '24px',
+            fill: '#ffffff',
             fontStyle: 'bold',
-            fontFamily: 'Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif',
-            stroke: '#03111c',
-            strokeThickness: 6,
-        }).setOrigin(1,1);
+            fontFamily: '"Arial Black", "Segoe UI Black", Arial, sans-serif',
+            stroke: '#00131f',
+            strokeThickness: 5,
+        }).setOrigin(1,1).setResolution(2);
+        versionText.setShadow(0, 2, '#000000', 4, true, true);
 
         const continueMeta = SaveManager.getRunSaveMeta();
         const hasContinue = !!continueMeta?.hasContinue;
@@ -1248,7 +1249,7 @@ export class MainMenu {
             const versionPadY = Phaser.Math.Clamp(Math.round(height * 0.02), 12, 20);
             const versionSafeLeft = Phaser.Math.Clamp(Math.round(width * 0.035), 16, 32);
             const versionParallaxBleed = 14;
-            const versionTargetFontSize = 22;
+            const versionTargetFontSize = 24;
             const topPad = Phaser.Math.Clamp(Math.round(Math.min(width, height) * 0.055), 30, 44);
 
             logo.setPosition(centerX, logoY).setScale(logoScale);

@@ -432,6 +432,11 @@ export class mapView extends Phaser.Scene {
 
         if (prev >= 3 || next < 3) return false;
         if (state.militiaUnlockRewardShown) return false;
+        if (hasStoreUnlock(STORE_UNLOCK_KEYS.militiaParcel)) {
+            state.pendingMilitiaUnlockReward = false;
+            state.militiaUnlockRewardShown = true;
+            return false;
+        }
 
         state.pendingMilitiaUnlockReward = true;
         return true;
@@ -440,6 +445,11 @@ export class mapView extends Phaser.Scene {
     _tryPresentPendingMilitiaUnlockReward() {
         const state = this._townXp || (this._townXp = this._createTownXpState());
         if (!state.pendingMilitiaUnlockReward || state.militiaUnlockRewardShown) return false;
+        if (hasStoreUnlock(STORE_UNLOCK_KEYS.militiaParcel)) {
+            state.pendingMilitiaUnlockReward = false;
+            state.militiaUnlockRewardShown = true;
+            return false;
+        }
         if (this._isTutorialActive()) return false;
         if (this._isTownXpRewardPresentationBlocked()) return false;
         if (this._townTowerLossInProgress || this._restartToMainMenuInProgress) return false;
@@ -3551,7 +3561,7 @@ export class mapView extends Phaser.Scene {
 
         const maybeOpenHordeUnlockReward = () => {
             const unlockReward = getHordeUnlockReward(hordeIndex);
-            if (!unlockReward) {
+            if (!unlockReward || hasStoreUnlock(unlockReward.unlockKey)) {
                 finalizeHordeReward();
                 return;
             }
@@ -3568,7 +3578,7 @@ export class mapView extends Phaser.Scene {
             });
         };
         const unlockReward = getHordeUnlockReward(hordeIndex);
-        if (!unlockReward) {
+        if (!unlockReward || hasStoreUnlock(unlockReward.unlockKey)) {
             finalizeHordeReward();
             return;
         }
@@ -3894,6 +3904,8 @@ export class mapView extends Phaser.Scene {
     }
 
     preload() {
+        updateWavedashLoadProgress(0);
+        this.load.on("progress", updateWavedashLoadProgress);
         this.load.spritesheet('player', player, { frameWidth: 16, frameHeight: 16});
         this.load.spritesheet('gun1', gun1, { frameWidth: 16, frameHeight: 16});
         this.load.spritesheet('playerAction', playerAction, { frameWidth: 16, frameHeight: 16});
@@ -4112,6 +4124,7 @@ export class mapView extends Phaser.Scene {
         if (this.uiScene?.sys?.isActive?.() && !this.menu?.active) {
             MainMenu.startMenuPhase();
         }
+        signalWavedashReady();
         setupTownBoundsToggle(this);
         this.cursors = this.input.keyboard.createCursorKeys();
         // Add collision between the cube and the barriers
@@ -4336,7 +4349,14 @@ export class mapView extends Phaser.Scene {
                     GameMap.placingItem,
                     this._getPlacementOptionsForItem(items)
                 );
-                if (GameMap.placingItem.blocked) return;
+                if (GameMap.placingItem.blocked) {
+                    const message = GameMap.getPlacementBlockMessage?.(GameMap.placingItem);
+                    if (message) {
+                        showAlert(this, message, "#ff5555");
+                        AudioManager.playError?.({ volume: 0.2 });
+                    }
+                    return;
+                }
                 if(items == TILE_TYPES.player){GameMap.handleMapClick(placement.gridX,placement.gridY,items)}
                 else{
                     buildingManager.queueBlockBuildTask({
@@ -4352,6 +4372,14 @@ export class mapView extends Phaser.Scene {
                 const items = itemTab.itemValues(this.registry.get('image'))
                 if(items?.price && this.money < items.price){
                     showAlert(this, 'insufficient Funds', "#ff0000");
+                    return;
+                }
+                if (Turret.placementState?.topSprite?.blocked) {
+                    const message = GameMap.getPlacementBlockMessage?.(Turret.placementState.topSprite);
+                    if (message) {
+                        showAlert(this, message, "#ff5555");
+                        AudioManager.playError?.({ volume: 0.2 });
+                    }
                     return;
                 }
                 const turret = Turret.handlePlacementClick(pointer, items, 1)
@@ -5074,6 +5102,7 @@ export class mapView extends Phaser.Scene {
             paddingAllowWalls: true,
             paddingProtectFarmSpots: false,
             allowAutoClearSite: true,
+            placementType: item,
         } : {};
     }
 
@@ -6608,7 +6637,7 @@ setFarmInstructionPhase2(previewData) {
 // Valid start tile rules (matches your getSelectedCells(1) behavior)
 getFarmTilePlacementType(x, y) {
     if (!this.isFarmTileInWorld(x, y)) return null;
-    if (!GameMap.isWithinMainIslandBuildInterior(x, y, 1, 1)) return null;
+    if (!GameMap.isWithinMainIslandBuildInterior(x, y, 1, 1, GameMap.BUILDING_SHORE_MARGIN ?? 2)) return null;
     if (buildingManager.isFarmTileBlockedByBuildReservation?.(x, y, 1)) return null;
 
     const cell = GameMap.grid?.[y]?.[x];
@@ -6650,6 +6679,12 @@ isValidFarmSelection(minX, maxX, minY, maxY) {
         }
     }
     return validCount > 0;
+}
+
+isFarmSelectionTooCloseToShore(minX, maxX, minY, maxY) {
+    const lenX = (maxX - minX) + 1;
+    const lenY = (maxY - minY) + 1;
+    return !GameMap.isWithinMainIslandBuildInterior(minX, minY, lenX, lenY, GameMap.BUILDING_SHORE_MARGIN ?? 2);
 }
 
 // ---- Farm selection seed accounting helpers ----
@@ -6867,7 +6902,13 @@ cancelFarmSelection(exitFarmMode = false) {
         // Phase 1: pick a valid start tile
         if (this.farmSelectPhase === 1) {
             const preview = this.getFarmSelectionPreviewData(gridX, gridX, gridY, gridY);
-            if (!preview.validSelection) return;
+            if (!preview.validSelection) {
+                if (this.isFarmSelectionTooCloseToShore(gridX, gridX, gridY, gridY)) {
+                    showAlert(this, GameMap.SHORE_PLACEMENT_MESSAGE || "Too close to shore", "#ff5555");
+                    AudioManager.playError?.({ volume: 0.2 });
+                }
+                return;
+            }
 
             this.startCell = { x: gridX, y: gridY };
             this.endCell = { x: gridX, y: gridY };
@@ -6887,7 +6928,13 @@ cancelFarmSelection(exitFarmMode = false) {
             const maxY = Math.max(this.startCell.y, this.endCell.y);
 
             const preview = this.getFarmSelectionPreviewData(minX, maxX, minY, maxY);
-            if (!preview.validSelection) return;
+            if (!preview.validSelection) {
+                if (this.isFarmSelectionTooCloseToShore(minX, maxX, minY, maxY)) {
+                    showAlert(this, GameMap.SHORE_PLACEMENT_MESSAGE || "Too close to shore", "#ff5555");
+                    AudioManager.playError?.({ volume: 0.2 });
+                }
+                return;
+            }
             if ((preview.plantableNewCount || 0) <= 0) {
                 return;
             }
@@ -7962,6 +8009,32 @@ cancelFarmSelection(exitFarmMode = false) {
 }
 
 const GAME_RENDER_RESOLUTION = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+
+function getWavedashSdk() {
+    if (typeof window === "undefined") return null;
+    return window.Wavedash || null;
+}
+
+function updateWavedashLoadProgress(value) {
+    const sdk = getWavedashSdk();
+    if (typeof sdk?.updateLoadProgressZeroToOne !== "function") return;
+    sdk.updateLoadProgressZeroToOne(Phaser.Math.Clamp(Number(value) || 0, 0, 1));
+}
+
+function signalWavedashReady() {
+    if (typeof window === "undefined" || window.__processV2WavedashReady) return;
+    const sdk = getWavedashSdk();
+    if (typeof sdk?.init !== "function") return;
+
+    window.__processV2WavedashReady = true;
+    try {
+        updateWavedashLoadProgress(1);
+        sdk.init();
+    } catch (err) {
+        window.__processV2WavedashReady = false;
+        console.warn("Wavedash init failed", err);
+    }
+}
 
 function installTextResolutionDefault(PhaserRef, resolution) {
     const factoryProto = PhaserRef?.GameObjects?.GameObjectFactory?.prototype;

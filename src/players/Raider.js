@@ -421,17 +421,6 @@ export class Raider {
             return false;
         }
 
-        const shoreWall = Raider._adjacentBreachableWallTile(troop);
-        const now = Raider._now(troop);
-        const shoreWallHandoffActive = shoreWall && now < Number(troop._shoreWallBreachUntil || 0);
-        if (
-            shoreWall &&
-            (shoreWallHandoffActive || swimming || recovering || onWater || (!onEnemyLand && !onWater))
-        ) {
-            Raider._handoffWaterRecoveryToShoreBreach(troop, shoreWall);
-            return false;
-        }
-
         if (!recovering && !swimming && !onWater) return false;
 
         if (onWater && !swimming) {
@@ -489,20 +478,6 @@ export class Raider {
             troop.rotation = Phaser.Math.Angle.Between(0, 0, vx, vy);
         }
 
-        return true;
-    }
-
-    static _handoffWaterRecoveryToShoreBreach(troop, wallTile = null) {
-        if (!troop?.active) return false;
-        troop.isSwimming = false;
-        troop._enemyWaterRecovery = false;
-        troop._enemyWaterRecoveryTarget = null;
-        troop._shoreWallBreachHint = wallTile || null;
-        troop._shoreWallBreachUntil = Raider._now(troop) + 1800;
-        troop.body?.setVelocity?.(0, 0);
-        troop.currentPath?.splice?.(0);
-        troop.finalPos = null;
-        Teams.movePlayerState(troop, CONTROL_STATES.TRACK_MODE);
         return true;
     }
 
@@ -1067,6 +1042,15 @@ export class Raider {
         return { x, y };
     }
 
+    static _isHostileBreachableWallAt(troop, x, y) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        const wall = Wall.getAt?.(x, y);
+        if (!wall?.active) return false;
+        if (Number(wall.team) === Number(troop?.body?.team)) return false;
+        if (!Map._wallStructureInfoAt?.(x, y)) return false;
+        return true;
+    }
+
     static _adjacentBreachableWallTile(troop) {
         const tile = Raider._troopTile(troop);
         if (!tile) return null;
@@ -1082,10 +1066,7 @@ export class Raider {
         for (const [dx, dy] of offsets) {
             const x = tile.x + dx;
             const y = tile.y + dy;
-            const wall = Wall.getAt?.(x, y);
-            if (!wall?.active) continue;
-            if (Number(wall.team) === Number(troop?.body?.team)) continue;
-            if (!Map._wallStructureInfoAt?.(x, y)) continue;
+            if (!Raider._isHostileBreachableWallAt(troop, x, y)) continue;
             return { x, y };
         }
 
@@ -1093,16 +1074,6 @@ export class Raider {
     }
 
     static _fallbackAdjacentBreachTiles(troop) {
-        const hinted = troop?._shoreWallBreachHint;
-        const hintedWall = hinted ? Wall.getAt?.(hinted.x, hinted.y) : null;
-        if (
-            hintedWall?.active &&
-            Number(hintedWall.team) !== Number(troop?.body?.team) &&
-            Map._wallStructureInfoAt?.(hinted.x, hinted.y)
-        ) {
-            return [{ x: hinted.x, y: hinted.y }];
-        }
-
         const tile = Raider._adjacentBreachableWallTile(troop);
         return tile ? [tile] : [];
     }

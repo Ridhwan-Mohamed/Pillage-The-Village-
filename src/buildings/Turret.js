@@ -159,6 +159,7 @@ export class Turret {
           paddingAllowWalls: true,
           paddingProtectFarmSpots: false,
           allowAutoClearSite: true,
+          placementType: item,
         }
       );
 

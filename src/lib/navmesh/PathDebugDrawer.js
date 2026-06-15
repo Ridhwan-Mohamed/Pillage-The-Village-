@@ -2,6 +2,7 @@
 import Phaser from "phaser";
 import { Player } from "../../players/Player";
 import { BLOCKDEPTH } from "../../constants";
+import { bindDebugHotkey } from "../../debug/DebugHotkeys.js";
 
 export class PathDebugDrawer {
   static scene = null;
@@ -20,8 +21,7 @@ export class PathDebugDrawer {
     if (this.scene) return; // only once
     this.scene = scene;
 
-    // Toggle with P
-    scene.input.keyboard.on("keydown-P", () => {
+    bindDebugHotkey(scene, "P", () => {
       this.enabled = !this.enabled;
 
       if (!this.enabled) {
